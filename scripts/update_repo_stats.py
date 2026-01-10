@@ -64,7 +64,7 @@ def list_repos_in_org(org: str) -> List[str]:
         url = f"https://api.github.com/orgs/{org}/repos?per_page={per_page}&page={page}"
         code, obj = gh_api_json("GET", url, GH_PAT)
         if code != 200 or not isinstance(obj, list):
-            raise RuntimeError(f"Failed to list repos: status={code} resp={obj}")
+            return []  # do not hard-fail; caller may fall back
         if not obj:
             break
         for r in obj:
@@ -92,19 +92,15 @@ def load_targets_from_orchestrator() -> Optional[List[str]]:
 
 
 def discover_target_repos() -> List[str]:
-    names = list_repos_in_org(ORG)
-    targets = [n for n in names if n == PREFIX or n.startswith(PREFIX + "_")]
-    # Sort: base repo first, then numeric years ascending, then other
-    def key(n: str):
-        if n == PREFIX:
-            return (0, 0, n)
-        tail = n[len(PREFIX)+1:] if n.startswith(PREFIX + "_") else ""
-        try:
-            y = int(tail)
-            return (1, y, n)
-        except Exception:
-            return (2, 0, n)
-    return sorted(targets, key=key)
+    # Prefer orchestrator-maintained targets list (avoids org listing permissions).
+    targets_from_file = load_targets_from_orchestrator()
+    if targets_from_file:
+        targets = [n for n in targets_from_file if n == PREFIX or n.startswith(PREFIX + "_")]
+        return sorted(set(targets))
+
+    # If targets file is missing (e.g., first run), degrade gracefully.
+    print("[WARN] targets file missing; cannot list org repos with some fine-grained PATs. Using base repo only.")
+    return [PREFIX]
 
 def get_file_from_repo(repo: str, path: str) -> Optional[bytes]:
     url = f"https://api.github.com/repos/{ORG}/{repo}/contents/{urllib.parse.quote(path)}?ref={urllib.parse.quote(DEFAULT_BRANCH)}"
