@@ -74,12 +74,10 @@ def list_repos(owner: str, token: str = "", mode: str = "auto") -> List[str]:
 
     last_err: Optional[Exception] = None
     for ep in candidates:
-        # Try WITH token first (if provided)
         try:
             return paged(ep, use_token=bool(token))
         except urllib.error.HTTPError as e:
             last_err = e
-            # Retry WITHOUT token for 401/403/404 (token may cause 404 masking)
             if e.code in (401, 403, 404):
                 try:
                     return paged(ep, use_token=False)
