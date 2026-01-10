@@ -1,0 +1,42 @@
+name: Polymarket crawl (daily, PAT, auto-create year repos)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "20 0 * * *"  # daily 00:20 UTC
+
+concurrency:
+  group: polymarket-crawl-daily
+  cancel-in-progress: true
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout orchestrator repo
+        uses: actions/checkout@v4
+        with:
+          # Use PAT so we can push checkpoint commits even if org blocks GITHUB_TOKEN
+          token: ${{ secrets.POLYMARKET_PAT }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run crawler (incremental)
+        env:
+          ORG: "statground"
+          REPO_PREFIX: "Statground_Data_Polymarket"
+          DEFAULT_BRANCH: "main"
+          GH_PAT: ${{ secrets.POLYMARKET_PAT }}
+          # Polymarket API
+          POLY_BASE: "https://gamma-api.polymarket.com"
+          PAGE_LIMIT: "100"
+          MAX_PAGES: "200"
+          ORDER_PRIMARY: "updatedAt"
+          ORDER_FALLBACK: "id"
+          OUT_ROOT: "by_created"
+          STATE_PATH: ".state/polymarket_checkpoint.json"
+        run: |
+          python scripts/polymarket_crawl_and_fanout.py
