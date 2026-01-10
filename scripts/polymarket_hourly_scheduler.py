@@ -1,26 +1,14 @@
 #!/usr/bin/env python3
 
 """
-Hourly scheduler for a single workflow:
-- Runs every hour.
-- Crawls Polymarket only once per UTC day (when due).
-- Always updates repo stats after crawl (or alone if crawl not due).
+Single-workflow hourly scheduler.
+- Workflow runs hourly (cron).
+- Crawl runs only once per UTC day.
+- Repo stats runs every hour.
+- If crawl is due: crawl -> stats (strict order).
 
-Key goals:
-- One workflow YAML only.
-- If crawl is due, do: crawl -> stats (in this order).
-- Avoid orchestrator push conflicts: crawler version should update checkpoint via GitHub Contents API.
-- The scheduler state is stored in the orchestrator repo using GitHub Contents API (SHA safe update).
-
-Requirements:
-- Secret: POLYMARKET_PAT (fine-grained PAT)
-  - Contents: read/write
-  - Actions: read/write (optional; not needed here because we run stats inline)
-  - Administration: read/write (only if crawler auto-creates year repos)
-
-Expected scripts in repo:
-- scripts/polymarket_crawl_and_fanout.py  (the PAT v2 version that updates checkpoint via API)
-- scripts/update_repo_stats.py            (your repo-stats generator)
+State & outputs are written using GitHub Contents API (SHA-safe),
+so we avoid git push conflicts on the orchestrator repo.
 """
 import os
 import json
@@ -69,7 +57,6 @@ def gh_api_json(method: str, url: str, token: str, data: Optional[dict] = None) 
             payload = e.read().decode("utf-8", errors="ignore")
         except Exception:
             pass
-        obj = None
         try:
             obj = json.loads(payload) if payload else None
         except Exception:
@@ -101,7 +88,7 @@ def put_content(path: str, content_bytes: bytes, message: str):
     if code not in (200, 201):
         raise RuntimeError(f"Failed to PUT {path}: status={code} resp={obj}")
 
-def load_sched_state() -> dict:
+def load_state() -> dict:
     _, content = get_content(SCHED_STATE_PATH)
     if not content:
         return {}
@@ -110,10 +97,13 @@ def load_sched_state() -> dict:
     except Exception:
         return {}
 
-def save_sched_state(state: dict):
+def save_state(state: dict):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    msg = f"Update scheduler state ({ts})"
-    put_content(SCHED_STATE_PATH, json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8"), msg)
+    put_content(
+        SCHED_STATE_PATH,
+        json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8"),
+        f"Update scheduler state ({ts})"
+    )
 
 def utc_day_str() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -121,26 +111,22 @@ def utc_day_str() -> str:
 def should_crawl(state: dict) -> bool:
     if not CRAWL_ONCE_PER_UTC_DAY:
         return True
-    last = state.get("last_crawl_utc_day")
-    return last != utc_day_str()
+    return state.get("last_crawl_utc_day") != utc_day_str()
 
 def main():
     if not GH_PAT:
-        raise RuntimeError("GH_PAT is required. Set secret POLYMARKET_PAT and env GH_PAT.")
+        raise RuntimeError("Missing GH_PAT. Set Actions secret POLYMARKET_PAT and map it to env GH_PAT.")
 
-    state = load_sched_state()
-    do_crawl = should_crawl(state)
-
-    if do_crawl:
-        print(f"[SCHED] crawl due (last={state.get('last_crawl_utc_day')}) -> running crawl then stats")
+    state = load_state()
+    if should_crawl(state):
+        print(f"[SCHED] crawl due (last={state.get('last_crawl_utc_day')}) -> crawl then stats")
         run(["python", "scripts/polymarket_crawl_and_fanout.py"])
         state["last_crawl_utc_day"] = utc_day_str()
         state["last_crawl_at_utc"] = datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
-        save_sched_state(state)
+        save_state(state)
     else:
-        print(f"[SCHED] crawl not due today ({utc_day_str()}) -> stats only")
+        print(f"[SCHED] crawl not due for UTC day {utc_day_str()} -> stats only")
 
-    # Always run stats after (or alone)
     run(["python", "scripts/update_repo_stats.py"])
     print("[DONE]")
 
