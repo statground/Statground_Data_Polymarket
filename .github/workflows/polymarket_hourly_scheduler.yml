@@ -1,22 +1,21 @@
-name: Polymarket crawl (daily, PAT, auto-create year repos)
+name: Polymarket hourly scheduler (daily crawl + hourly stats, single workflow)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "20 0 * * *"  # daily 00:20 UTC
+    - cron: "0 * * * *"   # every hour at HH:00 UTC
 
 concurrency:
-  group: polymarket-crawl-daily
-  cancel-in-progress: true
+  group: polymarket-hourly-scheduler
+  cancel-in-progress: false
 
 jobs:
-  crawl:
+  run:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout orchestrator repo
         uses: actions/checkout@v4
         with:
-          # Use PAT so we can push checkpoint commits even if org blocks GITHUB_TOKEN
           token: ${{ secrets.POLYMARKET_PAT }}
 
       - name: Set up Python
@@ -24,13 +23,15 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Run crawler (incremental)
+      - name: Decide (daily crawl?) then run stats (always)
         env:
           ORG: "statground"
           REPO_PREFIX: "Statground_Data_Polymarket"
+          ORCHESTRATOR_REPO: "Statground_Data_Polymarket"
           DEFAULT_BRANCH: "main"
           GH_PAT: ${{ secrets.POLYMARKET_PAT }}
-          # Polymarket API
+
+          # Crawl settings
           POLY_BASE: "https://gamma-api.polymarket.com"
           PAGE_LIMIT: "100"
           MAX_PAGES: "200"
@@ -38,5 +39,12 @@ jobs:
           ORDER_FALLBACK: "id"
           OUT_ROOT: "by_created"
           STATE_PATH: ".state/polymarket_checkpoint.json"
+
+          # Scheduler settings
+          SCHED_STATE_PATH: ".state/polymarket_scheduler.json"
+          CRAWL_ONCE_PER_UTC_DAY: "true"
+
+          # Stats settings (your existing stats script should read these, if applicable)
+          REPO_STATS_MD_PATH: "POLYMARKET_REPO_STATS.md"
         run: |
-          python scripts/polymarket_crawl_and_fanout.py
+          python scripts/polymarket_hourly_scheduler.py
