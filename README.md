@@ -1,7 +1,7 @@
-# Polymarket: single workflow (hourly) + daily crawl (UTC) + hourly stats
+# Polymarket: single workflow (every 6 hours) + daily crawl (UTC) + every 6 hours stats
 
 ## What you get
-- **One** workflow: `.github/workflows/polymarket_hourly_scheduler.yml`
+- **One** workflow: `.github/workflows/polymarket_every 6 hours_scheduler.yml`
 - Runs **every hour** (UTC)
 - Crawl runs **once per UTC day**
 - Stats runs **every hour**
@@ -23,4 +23,8 @@ Hourly stats reads those small files via GitHub API and updates `POLYMARKET_REPO
 ## Files written in orchestrator repo (via GitHub API)
 - `.state/polymarket_scheduler.json`  (scheduler state)
 - `.state/polymarket_checkpoint.json` (crawl checkpoint)
-- `POLYMARKET_REPO_STATS.md`          (hourly stats output)
+- `POLYMARKET_REPO_STATS.md`          (every 6 hours stats output)
+
+
+## Note: fine-grained PAT org listing 404
+The every 6 hours stats script no longer requires listing org repositories. The daily crawler writes `.state/polymarket_targets.json` into the orchestrator repo, and stats uses that file.

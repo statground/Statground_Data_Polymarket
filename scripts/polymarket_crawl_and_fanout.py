@@ -310,6 +310,26 @@ def save_checkpoint(state: Dict[str, str]):
     put_content(CHECKPOINT_PATH, json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8"),
                 f"Update crawl checkpoint ({ts})")
 
+
+def save_targets(repos: List[str]):
+    """
+    Save list of target repos for stats (avoid org listing permissions).
+    Written into orchestrator repo via Contents API.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    payload = {
+        "updated_at_utc": ts,
+        "org": ORG,
+        "prefix": PREFIX,
+        "repos": sorted(set(repos)),
+    }
+    put_content(
+        ".state/polymarket_targets.json",
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8"),
+        f"Update Polymarket targets ({ts})"
+    )
+
+
 def iso_leq(a: str, b: str) -> bool:
     da = parse_iso_to_utc_naive(a) if a else None
     db = parse_iso_to_utc_naive(b) if b else None
@@ -436,6 +456,7 @@ def compute_counts_via_git_ls_files(repo_dir: str) -> Dict[str, int]:
 
 def fanout_and_push(staging_root: str) -> int:
     year_to_files: Dict[Optional[int], List[str]] = {}
+    touched_repos: List[str] = []
 
     for entity in ("events", "markets", "series"):
         entity_dir = os.path.join(staging_root, entity)
@@ -466,6 +487,7 @@ def fanout_and_push(staging_root: str) -> int:
     for year, rel_files in year_to_files.items():
         repo = repo_name_for_year(year)
         ensure_repo_exists(repo)
+        touched_repos.append(repo)
 
         dest = os.path.join(workdir, repo)
         if os.path.exists(dest):
@@ -505,6 +527,12 @@ def fanout_and_push(staging_root: str) -> int:
         run(["git", "commit", "-m", msg], cwd=dest)
         run(["git", "push", "origin", DEFAULT_BRANCH], cwd=dest)
         updated_repos += 1
+
+    # Save targets list for hourly stats
+    try:
+        save_targets([ORCHESTRATOR_REPO] + touched_repos)
+    except Exception as e:
+        print(f"[WARN] failed to save targets: {e}")
 
     shutil.rmtree(workdir)
     return updated_repos

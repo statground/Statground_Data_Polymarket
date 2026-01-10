@@ -26,6 +26,7 @@ GH_PAT = os.getenv("GH_PAT", "")
 
 COUNTS_FILE_NAME = os.getenv("COUNTS_FILE_NAME", "POLYMARKET_COUNTS.json")
 STATS_MD_PATH = os.getenv("STATS_MD_PATH", "POLYMARKET_REPO_STATS.md")
+TARGET_REPOS_PATH = os.getenv("TARGET_REPOS_PATH", ".state/polymarket_targets.json")
 
 def gh_api_json(method: str, url: str, token: str, data: Optional[dict] = None) -> Tuple[int, object]:
     req = urllib.request.Request(url, method=method)
@@ -74,6 +75,21 @@ def list_repos_in_org(org: str) -> List[str]:
             break
         page += 1
     return names
+
+
+def load_targets_from_orchestrator() -> Optional[List[str]]:
+    raw = get_file_from_repo(ORCHESTRATOR_REPO, TARGET_REPOS_PATH)
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw.decode("utf-8"))
+        repos = (obj or {}).get("repos")
+        if isinstance(repos, list) and repos:
+            return repos
+    except Exception:
+        return None
+    return None
+
 
 def discover_target_repos() -> List[str]:
     names = list_repos_in_org(ORG)

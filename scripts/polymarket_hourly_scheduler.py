@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
 """
-Single-workflow hourly scheduler.
-- Workflow runs hourly (cron).
+Single-workflow 6-hour scheduler.
+- Workflow runs 6-hour (cron).
 - Crawl runs only once per UTC day.
 - Repo stats runs every hour.
 - If crawl is due: crawl -> stats (strict order).
@@ -113,22 +113,15 @@ def should_crawl(state: dict) -> bool:
         return True
     return state.get("last_crawl_utc_day") != utc_day_str()
 
+
 def main():
-    if not GH_PAT:
-        raise RuntimeError("Missing GH_PAT. Set Actions secret POLYMARKET_PAT and map it to env GH_PAT.")
+    # Always run crawl first, then stats (every 6 hours, UTC)
+    print("[SCHED] running crawl (every 6h)")
+    run(["python", "scripts/polymarket_crawl_and_fanout.py"])
 
-    state = load_state()
-    if should_crawl(state):
-        print(f"[SCHED] crawl due (last={state.get('last_crawl_utc_day')}) -> crawl then stats")
-        run(["python", "scripts/polymarket_crawl_and_fanout.py"])
-        state["last_crawl_utc_day"] = utc_day_str()
-        state["last_crawl_at_utc"] = datetime.now(timezone.utc).isoformat().replace("+00:00","Z")
-        save_state(state)
-    else:
-        print(f"[SCHED] crawl not due for UTC day {utc_day_str()} -> stats only")
-
+    print("[SCHED] running stats (every 6h)")
     run(["python", "scripts/update_repo_stats.py"])
-    print("[DONE]")
+
 
 if __name__ == "__main__":
     main()

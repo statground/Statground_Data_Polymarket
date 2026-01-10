@@ -50,5 +50,6 @@ jobs:
 
           # Stats output (written into orchestrator via API)
           STATS_MD_PATH: POLYMARKET_REPO_STATS.md
+          TARGET_REPOS_PATH: .state/polymarket_targets.json
         run: |
           python scripts/polymarket_hourly_scheduler.py
