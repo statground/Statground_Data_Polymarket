@@ -1,21 +1,19 @@
-name: Polymarket Crawl + Stats (every 6h)
+name: Polymarket (every 6h) - crawl + stats (UTC)
 
 on:
+  workflow_dispatch:
   schedule:
-    # UTC 기준: 매 6시간마다 실행 (00:00, 06:00, 12:00, 18:00)
-    - cron: "0 */6 * * *"
-  workflow_dispatch: {}
+    - cron: "0 */6 * * *"  # every 6 hours (UTC): 00:00, 06:00, 12:00, 18:00
 
-# 동일 브랜치에서 중복 실행 방지 (push 충돌/ff 충돌 예방)
 concurrency:
-  group: polymarket-crawl-stats-${{ github.ref }}
+  group: polymarket-6h-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  crawl_and_stats:
+  run:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -31,44 +29,39 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # 필요 시 여기에 패키지 추가 (현재 스크립트는 표준 라이브러리 + git + curl 형태라면 비워도 됨)
-          # pip install requests
+          pip install requests
 
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      # 1) 크롤링(팬아웃/연도 repo 반영) 먼저
-      - name: Run crawl (fanout)
+      - name: Run crawl then stats (single run)
         env:
-          # Fine-grained PAT (Secrets에 저장한 이름에 맞춰 수정)
-          STATGROUND_PAT: ${{ secrets.STATGROUND_PAT }}
-        run: |
-          python scripts/polymarket_crawl_and_fanout.py
+          # Fine-grained PAT (repo contents read/write for these repos)
+          POLYMARKET_GH_PAT: ${{ secrets.POLYMARKET_GH_PAT }}
 
-      # 2) 크롤링이 끝난 후 통계 생성
-      - name: Run stats (generate POLYMARKET_REPO_STATS.md)
-        env:
-          STATGROUND_PAT: ${{ secrets.STATGROUND_PAT }}
-        run: |
-          python scripts/update_repo_stats.py
+          # Org/user who owns repos
+          ORG: statground
 
-      # 3) 메인 repo에 생성된 MD/Counts 변경사항 커밋/푸시
-      - name: Commit & push stats to this repo
-        env:
-          STATGROUND_PAT: ${{ secrets.STATGROUND_PAT }}
-        run: |
-          set -e
-          # 변경사항 없으면 종료
-          if [ -z "$(git status --porcelain)" ]; then
-            echo "No changes to commit."
-            exit 0
-          fi
+          # Target repo name prefix
+          REPO_PREFIX: Statground_Data_Polymarket
 
-          git add -A
-          git commit -m "Update Polymarket crawl/stats (6h)"
-          # push 충돌 방지: fetch 후 rebase로 fast-forward 유지
-          git fetch origin main
-          git rebase origin/main || (git rebase --abort && git pull --rebase origin main)
-          git push https://x-access-token:${STATGROUND_PAT}@github.com/${{ github.repository }}.git HEAD:main
+          # API base
+          POLYMARKET_API_BASE: https://gamma-api.polymarket.com
+
+          # Fetch settings (tune as needed)
+          PAGE_LIMIT: "100"
+          MAX_PAGES: "200"
+          ORDER_PRIMARY: updatedAt
+          ORDER_FALLBACK: id
+
+          # Folder root inside each repo
+          OUT_ROOT: by_created
+
+          # Where checkpoint/targets stored in orchestrator repo
+          CHECKPOINT_PATH: .state/polymarket_checkpoint.json
+          TARGET_REPOS_PATH: .state/polymarket_targets.json
+
+          # Fan-out counts file (written into each year repo)
+          COUNTS_FILE_NAME: POLYMARKET_COUNTS.json
+
+          # Stats output (written into orchestrator repo)
+          STATS_MD_PATH: POLYMARKET_REPO_STATS.md
+        run: |
+          python scripts/polymarket_hourly_scheduler.py
