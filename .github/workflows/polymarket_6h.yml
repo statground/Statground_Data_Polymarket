@@ -1,0 +1,74 @@
+name: Polymarket Crawl + Stats (every 6h)
+
+on:
+  schedule:
+    # UTC 기준: 매 6시간마다 실행 (00:00, 06:00, 12:00, 18:00)
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+# 동일 브랜치에서 중복 실행 방지 (push 충돌/ff 충돌 예방)
+concurrency:
+  group: polymarket-crawl-stats-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  crawl_and_stats:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # 필요 시 여기에 패키지 추가 (현재 스크립트는 표준 라이브러리 + git + curl 형태라면 비워도 됨)
+          # pip install requests
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # 1) 크롤링(팬아웃/연도 repo 반영) 먼저
+      - name: Run crawl (fanout)
+        env:
+          # Fine-grained PAT (Secrets에 저장한 이름에 맞춰 수정)
+          STATGROUND_PAT: ${{ secrets.STATGROUND_PAT }}
+        run: |
+          python scripts/polymarket_crawl_and_fanout.py
+
+      # 2) 크롤링이 끝난 후 통계 생성
+      - name: Run stats (generate POLYMARKET_REPO_STATS.md)
+        env:
+          STATGROUND_PAT: ${{ secrets.STATGROUND_PAT }}
+        run: |
+          python scripts/update_repo_stats.py
+
+      # 3) 메인 repo에 생성된 MD/Counts 변경사항 커밋/푸시
+      - name: Commit & push stats to this repo
+        env:
+          STATGROUND_PAT: ${{ secrets.STATGROUND_PAT }}
+        run: |
+          set -e
+          # 변경사항 없으면 종료
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "Update Polymarket crawl/stats (6h)"
+          # push 충돌 방지: fetch 후 rebase로 fast-forward 유지
+          git fetch origin main
+          git rebase origin/main || (git rebase --abort && git pull --rebase origin main)
+          git push https://x-access-token:${STATGROUND_PAT}@github.com/${{ github.repository }}.git HEAD:main
