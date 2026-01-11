@@ -9,59 +9,61 @@ concurrency:
   group: polymarket-6h-${{ github.ref }}
   cancel-in-progress: false
 
+# We commit stats md into this repo, so need write
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   run:
     runs-on: ubuntu-latest
+
+    env:
+      # Fine-grained PAT stored as repo secret. Script reads GH_PAT.
+      GH_PAT: ${{ secrets.POLYMARKET_PAT }}
+
+      # Polymarket API base
+      POLY_BASE: https://gamma-api.polymarket.com
+
+      # GitHub org/prefix
+      ORG: statground
+      PREFIX: Statground_Data_Polymarket
+
+      # Branch used by all repos
+      DEFAULT_BRANCH: main
+
+      # Folder root inside each repo
+      OUT_ROOT: by_created
+
+      # Where checkpoint/targets stored in orchestrator repo
+      CHECKPOINT_PATH: .state/polymarket_checkpoint.json
+      TARGET_REPOS_PATH: .state/polymarket_targets.json
+
+      # Fan-out counts file (written into each year repo)
+      COUNTS_FILE_NAME: POLYMARKET_COUNTS.json
+
+      # Stats output (written into orchestrator repo)
+      STATS_MD_PATH: POLYMARKET_REPO_STATS.md
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Configure git
         run: |
-          python -m pip install --upgrade pip
-          pip install requests
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Run crawl then stats (single run)
-        env:
-          # Fine-grained PAT (repo contents read/write for these repos)
-          POLYMARKET_GH_PAT: ${{ secrets.POLYMARKET_GH_PAT }}
-
-          # Org/user who owns repos
-          ORG: statground
-
-          # Target repo name prefix
-          REPO_PREFIX: Statground_Data_Polymarket
-
-          # API base
-          POLYMARKET_API_BASE: https://gamma-api.polymarket.com
-
-          # Fetch settings (tune as needed)
-          PAGE_LIMIT: "100"
-          MAX_PAGES: "200"
-          ORDER_PRIMARY: updatedAt
-          ORDER_FALLBACK: id
-
-          # Folder root inside each repo
-          OUT_ROOT: by_created
-
-          # Where checkpoint/targets stored in orchestrator repo
-          CHECKPOINT_PATH: .state/polymarket_checkpoint.json
-          TARGET_REPOS_PATH: .state/polymarket_targets.json
-
-          # Fan-out counts file (written into each year repo)
-          COUNTS_FILE_NAME: POLYMARKET_COUNTS.json
-
-          # Stats output (written into orchestrator repo)
-          STATS_MD_PATH: POLYMARKET_REPO_STATS.md
+      - name: Crawl & fan-out (events/markets/series)
         run: |
-          python scripts/polymarket_hourly_scheduler.py
+          python scripts/polymarket_crawl_and_fanout.py
+
+      - name: Update repo stats markdown
+        run: |
+          python scripts/update_repo_stats.py
