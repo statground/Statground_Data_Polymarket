@@ -429,30 +429,45 @@ def git_url(repo: str) -> str:
     return f"https://x-access-token:{GH_PAT}@github.com/{ORG}/{repo}.git"
 
 def compute_counts_via_git_ls_files(repo_dir: str) -> Dict[str, int]:
-    # Fast counting without walking FS in Python
+    """Count tracked files using `git ls-files`.
+
+    IMPORTANT: Do NOT rely on directory names like `/events/` because the archive layout
+    can be either `events/...` or `by_created/events/...`. Instead, classify by filename
+    prefixes (`event_`, `market_`, `series_`) and `.meta.json` suffix.
+    """
     out = run(["git", "ls-files"], cwd=repo_dir)
     files = [line.strip() for line in out.splitlines() if line.strip()]
+
     total = len(files)
     json_files = sum(1 for p in files if p.endswith(".json"))
 
-    def is_event(p): return "/events/" in p and p.endswith(".json") and not p.endswith(".meta.json") and "/event_" in p
-    def is_market(p): return "/markets/" in p and p.endswith(".json") and not p.endswith(".meta.json") and "/market_" in p
-    def is_series(p): return "/series/" in p and p.endswith(".json") and not p.endswith(".meta.json") and "/series_" in p
-    def is_event_meta(p): return "/events/" in p and p.endswith(".meta.json")
-    def is_market_meta(p): return "/markets/" in p and p.endswith(".meta.json")
-    def is_series_meta(p): return "/series/" in p and p.endswith(".meta.json")
+    def base_name(path: str) -> str:
+        return path.rsplit("/", 1)[-1]
 
-    counts = {
+    def is_entity_json(fn: str, prefix: str) -> bool:
+        return fn.startswith(prefix) and fn.endswith(".json") and (not fn.endswith(".meta.json"))
+
+    def is_entity_meta(fn: str, prefix: str) -> bool:
+        return fn.startswith(prefix) and fn.endswith(".meta.json")
+
+    event_json  = sum(1 for p in files if is_entity_json(base_name(p), "event_"))
+    market_json = sum(1 for p in files if is_entity_json(base_name(p), "market_"))
+    series_json = sum(1 for p in files if is_entity_json(base_name(p), "series_"))
+
+    event_meta  = sum(1 for p in files if is_entity_meta(base_name(p), "event_"))
+    market_meta = sum(1 for p in files if is_entity_meta(base_name(p), "market_"))
+    series_meta = sum(1 for p in files if is_entity_meta(base_name(p), "series_"))
+
+    return {
         "total_files": total,
         "json_files": json_files,
-        "event_json": sum(1 for p in files if is_event(p)),
-        "market_json": sum(1 for p in files if is_market(p)),
-        "series_json": sum(1 for p in files if is_series(p)),
-        "event_meta": sum(1 for p in files if is_event_meta(p)),
-        "market_meta": sum(1 for p in files if is_market_meta(p)),
-        "series_meta": sum(1 for p in files if is_series_meta(p)),
+        "event_json": event_json,
+        "market_json": market_json,
+        "series_json": series_json,
+        "event_meta": event_meta,
+        "market_meta": market_meta,
+        "series_meta": series_meta,
     }
-    return counts
 
 def fanout_and_push(staging_root: str) -> int:
     year_to_files: Dict[Optional[int], List[str]] = {}
