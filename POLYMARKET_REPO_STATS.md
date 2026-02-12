@@ -1,17 +1,17 @@
 # Polymarket Repo Stats
-Updated: 2026-02-12 01:30:23 UTC
+Updated: 2026-02-12 07:02:10 UTC
 Owner: statground
 Prefix: Statground_Data_Polymarket (auto-detect main + year repos)
 
 ## Summary (All Repos)
-- Total files: 1,204,211
-- JSON files: 1,204,211
-- event JSON: 195,246 (excluding meta)
-- market JSON: 405,784 (excluding meta)
-- series JSON: 1,073 (excluding meta)
-- event meta: 195,246
-- market meta: 405,784
-- series meta: 1,073
+- Total files: 1,206,261
+- JSON files: 1,206,261
+- event JSON: 195,552 (excluding meta)
+- market JSON: 406,499 (excluding meta)
+- series JSON: 1,077 (excluding meta)
+- event meta: 195,552
+- market meta: 406,499
+- series meta: 1,077
 
 ## Per Repository
 Repository | Total files | JSON files | event JSON | market JSON | series JSON | event meta | market meta | series meta | Note
@@ -20,8 +20,8 @@ Statground_Data_Polymarket | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | counts file missing
 Statground_Data_Polymarket_2022 | 16,073 | 16,073 | 3,171 | 4,860 | 5 | 3,171 | 4,860 | 5 | 
 Statground_Data_Polymarket_2023 | 10,633 | 10,633 | 1,436 | 3,868 | 12 | 1,436 | 3,868 | 12 | 
 Statground_Data_Polymarket_2024 | 44,299 | 44,299 | 5,912 | 16,233 | 4 | 5,912 | 16,233 | 4 | 
-Statground_Data_Polymarket_2025 | 733,635 | 733,635 | 116,168 | 249,921 | 728 | 116,168 | 249,921 | 728 | 
-Statground_Data_Polymarket_2026 | 399,571 | 399,571 | 68,559 | 130,902 | 324 | 68,559 | 130,902 | 324 | 
+Statground_Data_Polymarket_2025 | 733,637 | 733,637 | 116,168 | 249,922 | 728 | 116,168 | 249,922 | 728 | 
+Statground_Data_Polymarket_2026 | 401,619 | 401,619 | 68,865 | 131,616 | 328 | 68,865 | 131,616 | 328 | 
 
 ### Notes
 - Counts are read from `POLYMARKET_COUNTS.json` in each repo.
