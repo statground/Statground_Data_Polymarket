@@ -3,13 +3,12 @@ name: Polymarket (every 6h) - crawl + stats (UTC)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"  # every 6 hours (UTC): 00:00, 06:00, 12:00, 18:00
+    - cron: "0 */6 * * *"  # every 6 hours (UTC)
 
 concurrency:
   group: polymarket-6h-${{ github.ref }}
   cancel-in-progress: false
 
-# We commit stats md into this repo, so need write
 permissions:
   contents: write
 
@@ -18,52 +17,43 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # Fine-grained PAT stored as repo secret. Script reads GH_PAT.
-      GH_PAT: ${{ secrets.POLYMARKET_PAT }}
+      # Optional PAT (for org-wide access). If empty, scripts fall back to GITHUB_TOKEN.
+      GH_TOKEN: ${{ secrets.POLYMARKET_PAT }}
 
       # Polymarket API base
       POLY_BASE: https://gamma-api.polymarket.com
 
-      # GitHub org/prefix
+      # GitHub repo info (checkpoint + stats are written to this repo)
       ORG: statground
-      PREFIX: Statground_Data_Polymarket
-
-      # Branch used by all repos
+      ORCHESTRATOR_REPO: Statground_Data_Polymarket
       DEFAULT_BRANCH: main
 
-      # Folder root inside each repo
-      OUT_ROOT: by_created
-
-      # Where checkpoint/targets stored in orchestrator repo
-      CHECKPOINT_PATH: .state/polymarket_checkpoint.json
-      TARGET_REPOS_PATH: .state/polymarket_targets.json
-
-      # Fan-out counts file (written into each year repo)
-      COUNTS_FILE_NAME: POLYMARKET_COUNTS.json
-
-      # Stats output (written into orchestrator repo)
-      STATS_MD_PATH: POLYMARKET_REPO_STATS.md
+      # ClickHouse (store as repo secrets)
+      CLICKHOUSE_HOST: ${{ secrets.CLICKHOUSE_HOST }}
+      CLICKHOUSE_PORT: ${{ secrets.CLICKHOUSE_PORT }}
+      CLICKHOUSE_USER: ${{ secrets.CLICKHOUSE_USER }}
+      CLICKHOUSE_PASSWORD: ${{ secrets.CLICKHOUSE_PASSWORD }}
+      CLICKHOUSE_DATABASE: ${{ secrets.CLICKHOUSE_DATABASE }}
+      # http (8123) or native (9000). If your 40011 is HTTP, set interface=http.
+      CLICKHOUSE_INTERFACE: ${{ secrets.CLICKHOUSE_INTERFACE }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Configure git
+      - name: Install dependencies
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Crawl & fan-out (events/markets/series)
+      - name: Run scheduler (crawl -> stats)
+        env:
+          # Actions token always exists; scripts fall back to this if GH_TOKEN is empty.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          python scripts/polymarket_crawl_and_fanout.py
-
-      - name: Update repo stats markdown
-        run: |
-          python scripts/update_repo_stats.py
+          python scripts/polymarket_hourly_scheduler.py
