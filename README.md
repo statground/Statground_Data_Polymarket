@@ -1,30 +1,30 @@
-# Polymarket: single workflow (every 6 hours) + daily crawl (UTC) + every 6 hours stats
+# Statground_Data_Polymarket (ClickHouse)
 
-## What you get
-- **One** workflow: `.github/workflows/polymarket_every 6 hours_scheduler.yml`
-- Runs **every hour** (UTC)
-- Crawl runs **once per UTC day**
-- Stats runs **every hour**
-- If crawl is due: **crawl -> stats**
+이 레포는 Polymarket 데이터를 **GitHub에 저장하지 않고**, 수집 결과를 **ClickHouse(statground_polymarket)** 로 바로 적재합니다.
 
-## Required secret
-Create a fine-grained PAT and add it as repo secret:
+## 동작 방식
+- GitHub Actions가 **6시간마다(UTC)** 실행됩니다.
+- 실행 스크립트: `scripts/polymarket_crawl_to_clickhouse.py`
+- 체크포인트는 `.state/polymarket_checkpoint.json` 으로 관리되며, 이 파일은 GitHub에 커밋되어 다음 실행에서 이어서 수집합니다.
 
-- Secret name: `POLYMARKET_PAT`
-- Permissions (recommended):
-  - Contents: Read & write (required)
-  - Administration: Read & write (required if auto-create year repos is desired)
+## 필요한 GitHub Secrets
+레포 Settings → Secrets and variables → Actions → Repository secrets
 
-## How stats work (scalable)
-Hourly stats does **not** clone huge repos.
-Instead, the daily crawler writes `POLYMARKET_COUNTS.json` into each year repo on every crawl.
-Hourly stats reads those small files via GitHub API and updates `POLYMARKET_REPO_STATS.md` in the orchestrator repo.
+- `CLICKHOUSE_HOST`
+- `CLICKHOUSE_PORT`
+- `CLICKHOUSE_USER`
+- `CLICKHOUSE_PASSWORD`
+- `CLICKHOUSE_DATABASE`
+- `CLICKHOUSE_INTERFACE`  (예: `http` 또는 `native`)
 
-## Files written in orchestrator repo (via GitHub API)
-- `.state/polymarket_scheduler.json`  (scheduler state)
-- `.state/polymarket_checkpoint.json` (crawl checkpoint)
-- `POLYMARKET_REPO_STATS.md`          (every 6 hours stats output)
+옵션:
+- `POLYMARKET_PAT` : org-wide 권한이 필요한 경우만. 없으면 기본 `GITHUB_TOKEN`으로 동작합니다.
 
+## ClickHouse 적재 테이블
+- `statground_polymarket.polymarket_raw`
+- `statground_polymarket.polymarket_event`
+- `statground_polymarket.polymarket_market`
+- `statground_polymarket.polymarket_series`
 
-## Note: fine-grained PAT org listing 404
-The every 6 hours stats script no longer requires listing org repositories. The daily crawler writes `.state/polymarket_targets.json` into the orchestrator repo, and stats uses that file.
+## 불필요 파일 제거
+- 기존 GitHub 저장(fanout) 및 repo-stats 갱신 관련 스크립트는 제거되었습니다.

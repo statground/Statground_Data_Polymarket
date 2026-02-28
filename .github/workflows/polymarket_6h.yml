@@ -1,4 +1,4 @@
-name: Polymarket (every 6h) - crawl + stats (UTC)
+name: Polymarket (every 6h) - crawl to ClickHouse (UTC)
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ jobs:
       # Polymarket API base
       POLY_BASE: https://gamma-api.polymarket.com
 
-      # GitHub repo info (checkpoint + stats are written to this repo)
+      # GitHub repo info (checkpoint is written to this repo)
       ORG: statground
       ORCHESTRATOR_REPO: Statground_Data_Polymarket
       DEFAULT_BRANCH: main
@@ -51,9 +51,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run scheduler (crawl -> stats)
+      - name: Crawl to ClickHouse
         env:
           # Actions token always exists; scripts fall back to this if GH_TOKEN is empty.
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          python scripts/polymarket_hourly_scheduler.py
+          python scripts/polymarket_crawl_to_clickhouse.py
