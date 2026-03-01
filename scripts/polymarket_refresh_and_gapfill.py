@@ -1,32 +1,24 @@
 #!/usr/bin/env python3
 """Polymarket refresh + gap-fill (ClickHouse).
 
-Purpose:
-- Re-fetch a *lookback window* of updates for each entity (series/events/markets)
-  and insert into ClickHouse (raw + normalized).
-- This helps keep existing records up-to-date and backfills missed objects that
-  were updated within the lookback period.
+Purpose
+- Re-fetch a *lookback window* for each entity (series/events/markets) and insert into ClickHouse (raw + normalized).
+- Keeps existing records up-to-date and backfills missed objects that were updated within the lookback period.
 
-How it works:
-1) For each entity, read the current max(updated_at_utc) from ClickHouse.
-2) Compute refresh_until = max_updated_at - 
-
-def entity_singular(entity: str) -> str:
-    return entity[:-1] if entity.endswith('s') else entity
-LOOKBACK_HOURS.
+How it works
+1) For each entity, read the current max(ifNull(updated_at_utc, collected_at_utc)) from ClickHouse.
+2) Compute refresh_until = max_effective_updated_at - LOOKBACK_HOURS.
 3) Pull from Polymarket API ordered by updatedAt desc, and stop once updatedAt <= refresh_until.
-4) Insert all fetched objects (even duplicates). Your tables use ReplacingMergeTree,
-   so use FINAL / argMax in analytics as needed.
+4) Insert all fetched objects. Tables use ReplacingMergeTree so downstream queries should use FINAL / argMax if needed.
 
-Env:
+Env
 - Same ClickHouse env vars as polymarket_crawl_to_clickhouse.py
 - LOOKBACK_HOURS (default: 72)
 - PAGE_LIMIT, MAX_PAGES, POLY_BASE, ORDER_PRIMARY, ORDER_FALLBACK (optional)
 
-Outputs:
-- Writes a JSON report to ./artifacts/polymarket_refresh_report.json
+Outputs
+- Writes ./artifacts/polymarket_refresh_report.json
 """
-
 import os, json
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -38,6 +30,11 @@ from scripts.clickhouse_optimize import optimize_random_partitions
 import scripts.polymarket_crawl_to_clickhouse as pm
 
 LOOKBACK_HOURS = int(os.getenv("LOOKBACK_HOURS", "72"))
+
+def entity_singular(entity: str) -> str:
+    """Normalize plural entity to singular label (events->event, markets->market)."""
+    return entity[:-1] if entity.endswith('s') else entity
+
 
 def _dt_to_iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
