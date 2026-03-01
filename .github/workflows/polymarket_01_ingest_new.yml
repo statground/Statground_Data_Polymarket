@@ -1,12 +1,12 @@
-name: Polymarket (every 6h) - crawl to ClickHouse (UTC)
+name: Polymarket - Ingest NEW series/events/markets (UTC)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"  # every 6 hours (UTC)
+    - cron: '0 * * * *'  # every 1 hour (UTC)
 
 concurrency:
-  group: polymarket-6h-${{ github.ref }}
+  group: polymarket-ingest-new-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -17,24 +17,18 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      # Optional PAT (for org-wide access). If empty, scripts fall back to GITHUB_TOKEN.
       GH_TOKEN: ${{ secrets.POLYMARKET_PAT }}
-
-      # Polymarket API base
       POLY_BASE: https://gamma-api.polymarket.com
 
-      # GitHub repo info (checkpoint is written to this repo)
       ORG: statground
       ORCHESTRATOR_REPO: Statground_Data_Polymarket
       DEFAULT_BRANCH: main
 
-      # ClickHouse (store as repo secrets)
       CLICKHOUSE_HOST: ${{ secrets.CLICKHOUSE_HOST }}
       CLICKHOUSE_PORT: ${{ secrets.CLICKHOUSE_PORT }}
       CLICKHOUSE_USER: ${{ secrets.CLICKHOUSE_USER }}
       CLICKHOUSE_PASSWORD: ${{ secrets.CLICKHOUSE_PASSWORD }}
       CLICKHOUSE_DATABASE: ${{ secrets.CLICKHOUSE_DATABASE }}
-      # http (8123) or native (9000). If your 40011 is HTTP, set interface=http.
       CLICKHOUSE_INTERFACE: ${{ secrets.CLICKHOUSE_INTERFACE }}
 
     steps:
@@ -51,9 +45,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Crawl to ClickHouse
+      - name: Ingest new objects
         env:
-          # Actions token always exists; scripts fall back to this if GH_TOKEN is empty.
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           python scripts/polymarket_crawl_to_clickhouse.py
+          mkdir -p artifacts
+          # also ship the current checkpoint for visibility
+          if [ -f .state/polymarket_checkpoint.json ]; then cp .state/polymarket_checkpoint.json artifacts/; fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: polymarket_ingest_new_artifacts
+          path: artifacts/*
+          if-no-files-found: ignore

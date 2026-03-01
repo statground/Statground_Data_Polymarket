@@ -53,6 +53,11 @@ ENDPOINTS = {
     "series":  f"{POLY_BASE}/series",
 }
 
+def entity_singular(entity: str) -> str:
+    # Keep RAW.entity consistent with DDL comment: event/market/series
+    return entity[:-1] if entity.endswith('s') else entity
+
+
 PAGE_LIMIT = int(os.getenv("PAGE_LIMIT", "100"))
 MAX_PAGES = int(os.getenv("MAX_PAGES", "200"))
 ORDER_PRIMARY = os.getenv("ORDER_PRIMARY", "updatedAt")
