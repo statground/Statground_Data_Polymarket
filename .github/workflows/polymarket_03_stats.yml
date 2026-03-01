@@ -40,7 +40,7 @@ jobs:
 
       - name: Generate stats report
         run: |
-          python scripts/polymarket_stats_report.py
+          python -m scripts.polymarket_stats_report
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

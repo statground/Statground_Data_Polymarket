@@ -52,7 +52,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          python scripts/polymarket_refresh_and_gapfill.py
+          python -m scripts.polymarket_refresh_and_gapfill
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

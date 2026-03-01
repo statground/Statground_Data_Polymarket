@@ -49,7 +49,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          python scripts/polymarket_crawl_to_clickhouse.py
+          python -m scripts.polymarket_crawl_to_clickhouse
           mkdir -p artifacts
           # also ship the current checkpoint for visibility
           if [ -f .state/polymarket_checkpoint.json ]; then cp .state/polymarket_checkpoint.json artifacts/; fi
