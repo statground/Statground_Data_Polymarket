@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   run:
@@ -27,6 +27,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system fonts (Korean)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -42,9 +49,19 @@ jobs:
         run: |
           python -m scripts.polymarket_stats_report
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: polymarket_stats_artifacts
-          path: artifacts/*
-          if-no-files-found: error
+      - name: Commit reports (md + charts only)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Only keep required outputs
+          git add reports/polymarket_stats/README.md reports/polymarket_stats/charts/*.png
+
+          # Commit only if changed
+          if git diff --cached --quiet; then
+            echo "[STATS] No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore(stats): update polymarket stats (UTC)"
+          git push

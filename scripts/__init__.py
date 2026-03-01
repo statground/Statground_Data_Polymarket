@@ -1,1 +1,1 @@
-# scripts package marker
+# Statground Polymarket scripts package
