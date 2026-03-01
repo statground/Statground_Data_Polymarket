@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   run:
@@ -42,20 +42,9 @@ jobs:
         run: |
           python -m scripts.polymarket_stats_report
 
-      - name: Commit reports (md + charts)
-        run: |
-          set -e
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # only keep the requested outputs
-          git add reports/polymarket_stats/README.md reports/polymarket_stats/charts/*.png
-
-          # If nothing changed, do nothing
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-            exit 0
-          fi
-
-          git commit -m "chore(stats): Polymarket 통계 업데이트 (UTC)"
-          git push
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: polymarket_stats_artifacts
+          path: artifacts/*
+          if-no-files-found: error

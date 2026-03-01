@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Polymarket 통계 리포트 (ClickHouse) -> 레포지토리에 커밋
+"""
+Polymarket stats report (ClickHouse) -> artifacts.
 
-요구사항 반영:
-- series / event / market 각각
-- 2가지 기준 모두 생성:
-  1) 생성 시점 기준(created_at_utc): Polymarket에서 객체가 만들어진 시각
-  2) 수집 시점 기준(collected_at_utc): 현재 테이블에 남아있는 '최신 스냅샷 행'이 마지막으로 수집된 시각
-    (주의: 현재 테이블들이 ReplacingMergeTree로 최신 1행 유지이므로, '최초 수집(first_seen)' 통계는 아님)
+Creates chart-heavy HTML (+ JSON/CSV) reports for:
+- created_at_utc-based distribution (when the entity was created on Polymarket)
+- collected_at_utc-based distribution (when our crawler last collected the latest snapshot row)
 
+Granularity:
 - total / yearly / monthly / daily / hourly
-- 시점별(구간별 건수) + 누적(누적합) 을 '하나의 차트'에서 동시에 표시
-- 텍스트/라벨/섹션은 한국어
-- 산출물은 레포 내 아래 2종만 생성(그 외 파일 생성 금지)
-  - reports/polymarket_stats/README.md
-  - reports/polymarket_stats/charts/*.png
+- For dense granularities we only show recent windows and hide long sections in <details>.
 
-이 스크립트는 GitHub Actions에서 실행되며, 워크플로가 생성물만 커밋/푸시한다.
+Outputs:
+- artifacts/polymarket_stats_report.json
+- artifacts/polymarket_stats_report.md
+- artifacts/polymarket_stats_report.html
+- artifacts/charts/*.png
+- artifacts/data/*.csv
 """
 
-import os
+import os, json
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -31,8 +31,13 @@ import matplotlib.pyplot as plt
 import scripts.polymarket_crawl_to_clickhouse as pm
 
 
-REPORT_DIR = os.path.join("reports", "polymarket_stats")
-CHART_DIR = os.path.join(REPORT_DIR, "charts")
+def _dt_to_iso(dt):
+    if dt is None:
+        return None
+    try:
+        return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    except Exception:
+        return str(dt)
 
 
 def q1(ch, sql):
@@ -46,6 +51,7 @@ def q_df(ch, sql, cols):
 
 
 def _bucket_sql(dt_col: str, period: str) -> str:
+    # dt_col must be DateTime64 / DateTime; period: hourly/daily/monthly/yearly
     if period == "hourly":
         return f"toStartOfHour({dt_col})"
     if period == "daily":
@@ -58,7 +64,7 @@ def _bucket_sql(dt_col: str, period: str) -> str:
 
 
 def _recent_where(dt_col: str, period: str) -> str:
-    # 너무 길면 가독성이 떨어져서 최근 구간만 시각화
+    # Keep charts readable
     if period == "hourly":
         return f"{dt_col} >= now() - INTERVAL 72 HOUR"
     if period == "daily":
@@ -70,164 +76,256 @@ def _recent_where(dt_col: str, period: str) -> str:
     return "1"
 
 
-def build_time_series(ch, db: str, table: str, dt_col: str, period: str, include_null_guard: bool) -> pd.DataFrame:
+def _plot_series(df: pd.DataFrame, title: str, out_path: str):
+    if df.empty:
+        return False
+    x = df["bucket"]
+    y = df["count"]
+    plt.figure(figsize=(12, 4))
+    plt.plot(x, y, marker="o", linewidth=1)
+    plt.title(title)
+    plt.xlabel("bucket")
+    plt.ylabel("count")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    return True
+
+
+def _plot_cumsum(df: pd.DataFrame, title: str, out_path: str):
+    if df.empty:
+        return False
+    d2 = df.copy()
+    d2["cumulative"] = d2["count"].cumsum()
+    x = d2["bucket"]
+    y = d2["cumulative"]
+    plt.figure(figsize=(12, 4))
+    plt.plot(x, y, marker="o", linewidth=1)
+    plt.title(title)
+    plt.xlabel("bucket")
+    plt.ylabel("cumulative")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+    return True
+
+
+def _write_csv(df: pd.DataFrame, out_path: str):
+    df.to_csv(out_path, index=False, encoding="utf-8")
+
+
+def build_time_series(ch, db, tbl, dt_col, period, allow_null=False):
     bucket = _bucket_sql(dt_col, period)
     where_recent = _recent_where(dt_col, period)
 
-    wh = []
-    if include_null_guard:
-        wh.append(f"{dt_col} IS NOT NULL")
-    wh.append(where_recent)
-    where_clause = " AND ".join(wh) if wh else "1"
+    where_parts = []
+    if allow_null:
+        where_parts.append(f"{dt_col} IS NOT NULL")
+    where_parts.append(where_recent)
+    where_clause = " AND ".join(where_parts) if where_parts else "1"
 
     sql = f"""
     SELECT
-      {bucket} AS bucket,
-      count() AS cnt
-    FROM {db}.{table}
+        {bucket} AS bucket,
+        count() AS count
+    FROM {db}.{tbl}
     WHERE {where_clause}
     GROUP BY bucket
     ORDER BY bucket
     """
-    df = q_df(ch, sql, ["bucket", "cnt"])
-    if df.empty:
-        return df
-
+    df = q_df(ch, sql, ["bucket", "count"])
+    # Normalize types for CSV/plot
     df["bucket"] = pd.to_datetime(df["bucket"])
-    df["cnt"] = df["cnt"].astype(int)
-    df["cum"] = df["cnt"].cumsum()
+    df["count"] = df["count"].astype(int)
     return df
-
-
-def plot_bar_and_cumline(df: pd.DataFrame, title: str, xlabel: str, out_path: str):
-    if df.empty:
-        return False
-
-    x = df["bucket"]
-    y = df["cnt"]
-    y2 = df["cum"]
-
-    fig, ax = plt.subplots(figsize=(12, 4))
-
-    # 막대: 구간별 건수
-    ax.bar(x, y)
-    ax.set_ylabel("구간별 건수")
-    ax.set_xlabel(xlabel)
-
-    # 누적 라인: 누적합
-    ax2 = ax.twinx()
-    ax2.plot(x, y2, marker="o", linewidth=1)
-    ax2.set_ylabel("누적 건수")
-
-    ax.set_title(title)
-    ax.tick_params(axis="x", rotation=45)
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=160)
-    plt.close(fig)
-    return True
-
-
-def _safe_name(s: str) -> str:
-    return s.replace(" ", "_").replace("/", "_")
 
 
 def main():
     ch = pm.get_ch_client()
+    os.makedirs("artifacts", exist_ok=True)
+    os.makedirs("artifacts/charts", exist_ok=True)
+    os.makedirs("artifacts/data", exist_ok=True)
+
     db = pm.CH_DB
+    raw = pm.RAW_TABLE
+    ev = pm.EVENT_TABLE
+    mk = pm.MARKET_TABLE
+    se = pm.SERIES_TABLE
 
-    os.makedirs(CHART_DIR, exist_ok=True)
+    run_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    run_at_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    report = {
+        "run_at_utc": run_at,
+        "db": db,
+        "tables": {},
+        "notes": [
+            "created_at_utc = Polymarket object creation time (nullable).",
+            "collected_at_utc = crawler collection time for the latest snapshot row (tables keep latest 1 row per id by ReplacingMergeTree).",
+        ],
+    }
 
     entities = [
-        ("시리즈", pm.SERIES_TABLE, "series_id"),
-        ("이벤트", pm.EVENT_TABLE, "event_id"),
-        ("마켓", pm.MARKET_TABLE, "market_id"),
+        ("series", se, "series_id"),
+        ("event", ev, "event_id"),
+        ("market", mk, "market_id"),
     ]
 
-    기준들 = [
-        ("생성 시점", "created_at_utc", True),
-        ("수집 시점", "collected_at_utc", False),
-    ]
+    # Basic coverage
+    for name, tbl, id_col in entities:
+        report["tables"][name] = {
+            "rows": q1(ch, f"SELECT count() FROM {db}.{tbl}"),
+            "uniq_ids": q1(ch, f"SELECT uniqExact({id_col}) FROM {db}.{tbl}"),
+            "created_at_null_rows": q1(ch, f"SELECT countIf(created_at_utc IS NULL) FROM {db}.{tbl}"),
+            "min_created_at_utc": _dt_to_iso(q1(ch, f"SELECT min(created_at_utc) FROM {db}.{tbl}")),
+            "max_effective_updated_at_utc": _dt_to_iso(q1(ch, f"SELECT max(ifNull(updated_at_utc, collected_at_utc)) FROM {db}.{tbl}")),
+            "max_collected_at_utc": _dt_to_iso(q1(ch, f"SELECT max(collected_at_utc) FROM {db}.{tbl}")),
+            "uniq_ids_updated_last_24h": q1(
+                ch,
+                f"""SELECT uniqExact({id_col})
+                    FROM {db}.{tbl}
+                    WHERE ifNull(updated_at_utc, collected_at_utc) >= now() - INTERVAL 24 HOUR"""
+            ),
+            "time_series": {
+                "by_created_at_utc": {},
+                "by_collected_at_utc": {},
+            }
+        }
 
-    periods = [
-        ("연도별", "yearly"),
-        ("월별", "monthly"),
-        ("일별", "daily"),
-        ("시간별", "hourly"),
-    ]
+    # RAW quick stats
+    report["tables"]["raw"] = {
+        "rows": q1(ch, f"SELECT count() FROM {db}.{raw}"),
+        "by_entity": {
+            "series": q1(ch, f"SELECT count() FROM {db}.{raw} WHERE entity='series'"),
+            "event": q1(ch, f"SELECT count() FROM {db}.{raw} WHERE entity='event'"),
+            "market": q1(ch, f"SELECT count() FROM {db}.{raw} WHERE entity='market'"),
+        },
+        "max_collected_at_utc": _dt_to_iso(q1(ch, f"SELECT max(collected_at_utc) FROM {db}.{raw}")),
+    }
 
-    # 상단 요약
-    summary_rows = []
-    for ent_kr, tbl, id_col in entities:
-        rows = q1(ch, f"SELECT count() FROM {db}.{tbl}")
-        uniq_ids = q1(ch, f"SELECT uniqExact({id_col}) FROM {db}.{tbl}")
-        null_created = q1(ch, f"SELECT countIf(created_at_utc IS NULL) FROM {db}.{tbl}")
-        min_created = q1(ch, f"SELECT min(created_at_utc) FROM {db}.{tbl}")
-        max_effective_updated = q1(ch, f"SELECT max(ifNull(updated_at_utc, collected_at_utc)) FROM {db}.{tbl}")
-        max_collected = q1(ch, f"SELECT max(collected_at_utc) FROM {db}.{tbl}")
-        summary_rows.append((
-            ent_kr,
-            int(rows or 0),
-            int(uniq_ids or 0),
-            int(null_created or 0),
-            str(min_created) if min_created is not None else "-",
-            str(max_effective_updated) if max_effective_updated is not None else "-",
-            str(max_collected) if max_collected is not None else "-",
-        ))
+    periods = ["yearly", "monthly", "daily", "hourly"]
 
-    md = []
-    md.append("# Polymarket 수집 통계\n")
-    md.append(f"- 실행 시각: {run_at_utc}")
-    md.append(f"- 대상 DB: `{db}`\n")
-    md.append("> **주의**: series/event/market 테이블은 ReplacingMergeTree 기반 최신 1행 유지 구조입니다.\n")
-    md.append("> 따라서 **수집 시점 기준 통계는 ‘최신 스냅샷이 마지막으로 수집된 시점’ 분포**이며, ‘최초 발견(first_seen)’ 통계는 아닙니다.\n")
+    # Build time series data + charts
+    html_sections = []
 
-    md.append("## 요약\n")
-    md.append("| 구분 | 행 수 | 고유 ID 수 | 생성시각 NULL 행 | 최소 생성 시각 | 최대 갱신(유효) 시각 | 최대 수집 시각 |")
-    md.append("|---|---:|---:|---:|---|---|---|")
-    for r in summary_rows:
-        md.append(f"| {r[0]} | {r[1]:,} | {r[2]:,} | {r[3]:,} | {r[4]} | {r[5]} | {r[6]} |")
-    md.append("")
+    def add_entity_section(name, tbl):
+        html_sections.append(f"<h2>{name}</h2>")
 
-    # 본문(차트)
-    for ent_kr, tbl, _ in entities:
-        md.append(f"## {ent_kr}\n")
-        for 기준_kr, dt_col, guard_null in 기준들:
-            md.append(f"### {기준_kr} 기준\n")
+        # Created-at
+        html_sections.append(f"<h3>Created at (created_at_utc)</h3>")
+        for period in periods:
+            df = build_time_series(ch, db, tbl, "created_at_utc", period, allow_null=True)
+            data_csv = f"artifacts/data/{name}__created_at__{period}.csv"
+            _write_csv(df, data_csv)
 
-            # total
-            if guard_null:
-                total_cnt = q1(ch, f"SELECT count() FROM {db}.{tbl} WHERE {dt_col} IS NOT NULL")
+            img1 = f"artifacts/charts/{name}__created_at__{period}.png"
+            img2 = f"artifacts/charts/{name}__created_at__{period}__cumsum.png"
+            ok1 = _plot_series(df, f"{name} created_at_utc ({period})", img1)
+            ok2 = _plot_cumsum(df, f"{name} created_at_utc cumulative ({period})", img2)
+
+            report["tables"][name]["time_series"]["by_created_at_utc"][period] = {
+                "csv": os.path.basename(data_csv),
+                "points": int(len(df)),
+            }
+
+            # Collapse dense sections
+            open_attr = " open" if period in ("yearly", "monthly") else ""
+            html_sections.append(f"<details{open_attr}><summary>{period}</summary>")
+            if df.empty:
+                html_sections.append("<p>(no data in window)</p>")
             else:
-                total_cnt = q1(ch, f"SELECT count() FROM {db}.{tbl}")
-            md.append(f"- 총 {기준_kr} 기준 집계 대상 행 수: **{int(total_cnt or 0):,}**\n")
+                if ok1:
+                    html_sections.append(f'<p><img src="charts/{os.path.basename(img1)}" style="max-width:100%;"></p>')
+                if ok2:
+                    html_sections.append(f'<p><img src="charts/{os.path.basename(img2)}" style="max-width:100%;"></p>')
+                html_sections.append(f'<p><a href="data/{os.path.basename(data_csv)}">download csv</a></p>')
+            html_sections.append("</details>")
 
-            for period_kr, period_key in periods:
-                df = build_time_series(ch, db, tbl, dt_col, period_key, include_null_guard=guard_null)
-                fname = _safe_name(f"{ent_kr}__{기준_kr}__{period_kr}.png")
-                out_png = os.path.join(CHART_DIR, fname)
+        # Collected-at
+        html_sections.append(f"<h3>Crawled at (collected_at_utc)</h3>")
+        for period in periods:
+            df = build_time_series(ch, db, tbl, "collected_at_utc", period, allow_null=False)
+            data_csv = f"artifacts/data/{name}__collected_at__{period}.csv"
+            _write_csv(df, data_csv)
 
-                if not df.empty:
-                    xlabel = period_kr.replace("별", "")
-                    title = f"{ent_kr} · {기준_kr} · {period_kr} (구간별 + 누적)"
-                    plot_bar_and_cumline(df, title=title, xlabel=xlabel, out_path=out_png)
+            img1 = f"artifacts/charts/{name}__collected_at__{period}.png"
+            img2 = f"artifacts/charts/{name}__collected_at__{period}__cumsum.png"
+            ok1 = _plot_series(df, f"{name} collected_at_utc ({period})", img1)
+            ok2 = _plot_cumsum(df, f"{name} collected_at_utc cumulative ({period})", img2)
 
-                open_default = period_key in ("yearly", "monthly")
-                md.append(f"<details{' open' if open_default else ''}>")
-                md.append(f"<summary>{period_kr} (구간별 + 누적)</summary>\n")
-                if df.empty:
-                    md.append("- 표시할 데이터가 없습니다. (최근 구간 기준)\n")
-                else:
-                    md.append(f"![](./charts/{fname})\n")
-                md.append("</details>\n")
+            report["tables"][name]["time_series"]["by_collected_at_utc"][period] = {
+                "csv": os.path.basename(data_csv),
+                "points": int(len(df)),
+            }
 
-    out_md = os.path.join(REPORT_DIR, "README.md")
-    os.makedirs(REPORT_DIR, exist_ok=True)
-    with open(out_md, "w", encoding="utf-8") as f:
-        f.write("\n".join(md).rstrip() + "\n")
+            open_attr = " open" if period in ("yearly", "monthly") else ""
+            html_sections.append(f"<details{open_attr}><summary>{period}</summary>")
+            if df.empty:
+                html_sections.append("<p>(no data in window)</p>")
+            else:
+                if ok1:
+                    html_sections.append(f'<p><img src="charts/{os.path.basename(img1)}" style="max-width:100%;"></p>')
+                if ok2:
+                    html_sections.append(f'<p><img src="charts/{os.path.basename(img2)}" style="max-width:100%;"></p>')
+                html_sections.append(f'<p><a href="data/{os.path.basename(data_csv)}">download csv</a></p>')
+            html_sections.append("</details>")
 
-    print(f"DONE. wrote {out_md} and charts under {CHART_DIR}")
+    for name, tbl, _ in entities:
+        add_entity_section(name, tbl)
+
+    # Write JSON
+    json_path = os.path.join("artifacts", "polymarket_stats_report.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+
+    # Write Markdown (compact)
+    md_lines = []
+    md_lines.append("# Polymarket Stats Report\n")
+    md_lines.append(f"- Run at (UTC): {run_at}\n")
+    md_lines.append(f"- Database: `{db}`\n")
+    md_lines.append("## Summary\n")
+    for name, tbl, _ in entities:
+        v = report["tables"][name]
+        md_lines.append(f"### {name}\n")
+        md_lines.append(f"- rows: {v['rows']}\n")
+        md_lines.append(f"- uniq_ids: {v['uniq_ids']}\n")
+        md_lines.append(f"- created_at_null_rows: {v['created_at_null_rows']}\n")
+        md_lines.append(f"- min_created_at_utc: {v['min_created_at_utc']}\n")
+        md_lines.append(f"- max_effective_updated_at_utc: {v['max_effective_updated_at_utc']}\n")
+        md_lines.append(f"- max_collected_at_utc: {v['max_collected_at_utc']}\n")
+        md_lines.append(f"- uniq_ids_updated_last_24h: {v['uniq_ids_updated_last_24h']}\n\n")
+    md_lines.append("### raw\n")
+    md_lines.append(f"- rows: {report['tables']['raw']['rows']}\n")
+    md_lines.append(f"- max_collected_at_utc: {report['tables']['raw']['max_collected_at_utc']}\n")
+    md_lines.append(f"- by_entity: {report['tables']['raw']['by_entity']}\n")
+
+    md_path = os.path.join("artifacts", "polymarket_stats_report.md")
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(md_lines))
+
+    # Write HTML (chart-heavy)
+    html = []
+    html.append("<!doctype html><html><head><meta charset='utf-8'>")
+    html.append("<meta name='viewport' content='width=device-width, initial-scale=1'>")
+    html.append("<title>Polymarket Stats Report</title>")
+    html.append("<style>body{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:16px; line-height:1.45} details{margin:10px 0} summary{cursor:pointer; font-weight:600}</style>")
+    html.append("</head><body>")
+    html.append("<h1>Polymarket Stats Report</h1>")
+    html.append(f"<p><b>Run at (UTC)</b>: {run_at}<br><b>DB</b>: <code>{db}</code></p>")
+    html.append("<p><b>Downloads:</b> <a href='polymarket_stats_report.json'>json</a> · <a href='polymarket_stats_report.md'>md</a></p>")
+    html.append("<details open><summary>Notes</summary><ul>")
+    for n in report["notes"]:
+        html.append(f"<li>{n}</li>")
+    html.append("</ul></details>")
+    html.extend(html_sections)
+    html.append("</body></html>")
+
+    html_path = os.path.join("artifacts", "polymarket_stats_report.html")
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(html))
+
+    print(f"DONE. wrote {json_path}, {md_path}, {html_path} + charts/data")
 
 
 if __name__ == "__main__":
