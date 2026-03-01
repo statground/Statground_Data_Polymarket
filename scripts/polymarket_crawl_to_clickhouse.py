@@ -42,6 +42,7 @@ from typing import Dict, List, Optional, Tuple
 import uuid
 
 import clickhouse_connect
+from scripts.clickhouse_optimize import optimize_random_partitions
 
 # -------------------------
 # Env

@@ -30,6 +30,9 @@ jobs:
       CLICKHOUSE_PASSWORD: ${{ secrets.CLICKHOUSE_PASSWORD }}
       CLICKHOUSE_DATABASE: ${{ secrets.CLICKHOUSE_DATABASE }}
       CLICKHOUSE_INTERFACE: ${{ secrets.CLICKHOUSE_INTERFACE }}
+      OPTIMIZE_AFTER_RUN: "1"
+      OPTIMIZE_PROB: "0.15"
+      OPTIMIZE_MAX_PARTITIONS: "4"
 
     steps:
       - name: Checkout
@@ -49,7 +52,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          python scripts/polymarket_crawl_to_clickhouse.py
+          python -m scripts.polymarket_crawl_to_clickhouse
           mkdir -p artifacts
           # also ship the current checkpoint for visibility
           if [ -f .state/polymarket_checkpoint.json ]; then cp .state/polymarket_checkpoint.json artifacts/; fi
