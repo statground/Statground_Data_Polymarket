@@ -32,6 +32,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
 
 import clickhouse_connect
+from scripts.clickhouse_optimize import optimize_random_partitions
 
 # Reuse most helpers from the incremental crawler
 import scripts.polymarket_crawl_to_clickhouse as pm

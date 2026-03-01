@@ -1,0 +1,1 @@
+# Statground Polymarket scripts package
