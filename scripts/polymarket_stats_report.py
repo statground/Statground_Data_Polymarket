@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""
-Polymarket 통계 리포트 (ClickHouse) -> 레포 커밋용 산출물 생성
+"""polymarket_stats_report
+
+Polymarket 공개 데이터 흐름 관점의 통계 리포트 생성 스크립트.
 
 산출물(커밋 대상):
 - reports/polymarket_stats/README.md
 - reports/polymarket_stats/charts/*.png
 
 통계 기준(2종):
-1) 생성 시점(created_at_utc): Polymarket 객체가 생성된 시각 분포
-2) 수집 시점(collected_at_utc): 최신 스냅샷(현재 테이블에 존재하는 최신 행)이 수집된 시각 분포
-   ※ ReplacingMergeTree(최신 1행 유지) 구조상 '최초 발견 시각'은 원천적으로 복원 불가. (히스토리 테이블 필요)
+1) 생성 시점: Polymarket에서 각 항목이 처음 만들어진 시점을 기준으로 집계
+2) 반영 시점: 데이터 흐름에 각 항목이 최근 반영된 시점을 기준으로 집계
 
 주기:
 - 전체 / 연도별 / 월별 / 일별 / 시간별
@@ -66,7 +66,7 @@ def setup_fonts():
 
 
 # ----------------------
-# ClickHouse helpers
+# Data store helpers
 # ----------------------
 def q_df(ch, sql: str, cols):
     r = ch.query(sql)
@@ -89,7 +89,7 @@ def build_series(ch, db: str, tbl: str, id_col: str, dt_col: str, period: str) -
     """
     Full-period time series:
     - bucket: period bucket
-    - cnt: uniqExact(id_col) per bucket (pre-merge duplicate 방지)
+    - cnt: uniqExact(id_col) per bucket
     """
     bucket = _bucket_expr(dt_col, period)
     sql = f"""
@@ -170,22 +170,22 @@ def df_to_tsv(df: pd.DataFrame, period: str, max_rows: int = None) -> str:
 
 
 def write_report(md_path: str, use_korean: bool, sections: list):
-    title = "Polymarket 수집 통계"
-    subtitle = "생성 시점(created_at_utc) / 수집 시점(collected_at_utc) 기준"
+    title = "Polymarket 통계 리포트"
+    subtitle = "생성 시점 / 반영 시점 기준"
     note_kr = (
-        "- **수집 시점**은 ReplacingMergeTree(최신 1행 유지) 구조에서 '현재 테이블에 남아있는 최신 행'의 collected_at_utc 분포입니다.\n"
-        "- '최초 발견(first_seen)' 통계가 필요하면 append-only 히스토리 테이블이 필요합니다.\n"
+        "본 문서는 Polymarket의 공개 데이터를 기준으로 집계한 결과입니다.\n"
+        "내부 저장/구현 방식과 무관하게, 공개 데이터 흐름 관점에서 정리된 통계만 제공합니다.\n"
     )
     note_en = (
-        "- 'Collected time' is the collected_at_utc of the latest snapshot rows currently stored (ReplacingMergeTree latest-row style).\n"
-        "- For true first-seen stats you need an append-only history table.\n"
+        "This document aggregates public Polymarket data.\n"
+        "It intentionally avoids internal storage/implementation details.\n"
     )
 
     with open(md_path, "w", encoding="utf-8") as f:
         if use_korean:
             f.write(f"# {title}\n\n{subtitle}\n\n{note_kr}\n")
         else:
-            f.write("# Polymarket Collection Stats\n\nBased on created_at_utc / collected_at_utc.\n\n" + note_en + "\n")
+            f.write("# Polymarket Statistics Report\n\nBased on created/reflected time.\n\n" + note_en + "\n")
 
         for sec in sections:
             f.write(sec)
