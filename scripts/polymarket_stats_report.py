@@ -160,15 +160,6 @@ def _fmt_bucket(period: str, dt: pd.Timestamp) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
 
-def df_to_tsv(df: pd.DataFrame, period: str, max_rows: int = None) -> str:
-    # full output by default; allow max_rows for internal use
-    lines = ["버킷\t구간별\t누적"]
-    it = df if max_rows is None else df.head(max_rows)
-    for _, r in it.iterrows():
-        lines.append(f"{_fmt_bucket(period, r['bucket'])}\t{int(r['cnt'])}\t{int(r['cum'])}")
-    return "\n".join(lines)
-
-
 def write_report(md_path: str, use_korean: bool, sections: list):
     title = "Polymarket 통계 리포트"
     subtitle = "생성 시점 / 반영 시점 기준"
@@ -317,27 +308,6 @@ def main():
 
                 rel_chart = f"charts/{chart_name}"
                 sections.append(subhead + f"\n![]({rel_chart})\n\n")
-
-                # Full-period output: include TSV in <details> for dense series
-                tsv = df_to_tsv(df, period_key, max_rows=None)
-
-                # Always fold daily/hourly to avoid bloating the top view
-                fold = period_key in ("daily", "hourly")
-                if fold:
-                    if use_korean:
-                        sections.append(
-                            "<details>\n<summary>데이터(전체 기간) 펼치기</summary>\n\n"
-                            "```tsv\n" + tsv + "\n```\n"
-                            "</details>\n\n"
-                        )
-                    else:
-                        sections.append(
-                            "<details>\n<summary>Show data (full period)</summary>\n\n"
-                            "```tsv\n" + tsv + "\n```\n"
-                            "</details>\n\n"
-                        )
-                else:
-                    sections.append("```tsv\n" + tsv + "\n```\n\n")
 
     md_path = os.path.join(out_dir, "README.md")
     write_report(md_path, use_korean, sections)
