@@ -40,6 +40,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install system fonts (Korean)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -56,6 +64,30 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           python -m scripts.polymarket_refresh_and_gapfill
+
+      - name: Sync latest repository state
+        run: |
+          git pull --rebase origin "${DEFAULT_BRANCH}"
+
+      - name: Generate stats report
+        run: |
+          python -m scripts.polymarket_stats_report
+
+      - name: Commit reports (md + charts only)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add reports/polymarket_stats/README.md reports/polymarket_stats/charts/*.png
+
+          if git diff --cached --quiet; then
+            echo "[STATS] No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore(stats): update polymarket stats after refresh (UTC)"
+          git pull --rebase origin "${DEFAULT_BRANCH}"
+          git push origin "HEAD:${DEFAULT_BRANCH}"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """
-Polymarket incremental crawler -> ClickHouse (raw + normalized).
+Polymarket incremental crawler -> ClickHouse (normalized only).
 
 What changed vs previous version:
 - No GitHub file fan-out / no year repos.
-- Each fetched object is inserted into ClickHouse:
-  - statground_polymarket.polymarket_raw
-  - statground_polymarket.polymarket_event
-  - statground_polymarket.polymarket_market
-  - statground_polymarket.polymarket_series
+- No dedicated polymarket_raw table writes.
+- Each fetched object is inserted directly into one normalized ClickHouse table,
+  and the original API payload is stored in the table's raw_json column.
 - Checkpoint is still stored in this repo under .state/ using GitHub Contents API (SHA-safe),
   so workflow concurrency won't corrupt the checkpoint.
 
@@ -28,20 +26,23 @@ Optional:
 Notes:
 - ClickHouse tables are expected to exist (DDL in your polymarket_*.SQL).
 - Engines are ReplacingMergeTree, so duplicate (same id) rows may exist physically until merges;
-  for analytics, use FINAL or argMax patterns.
+  for analytics, use argMax / max(collected_at_utc) patterns where needed.
 """
-import os
+from __future__ import annotations
+
 import json
-import time
+import os
 import random
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
-import urllib.error
+import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
-import uuid
 
 import clickhouse_connect
+
 from scripts.clickhouse_optimize import optimize_random_partitions
 
 # -------------------------
@@ -53,11 +54,6 @@ ENDPOINTS = {
     "markets": f"{POLY_BASE}/markets",
     "series":  f"{POLY_BASE}/series",
 }
-
-def entity_singular(entity: str) -> str:
-    # Keep RAW.entity consistent with DDL comment: event/market/series
-    return entity[:-1] if entity.endswith('s') else entity
-
 
 PAGE_LIMIT = int(os.getenv("PAGE_LIMIT", "100"))
 MAX_PAGES = int(os.getenv("MAX_PAGES", "200"))
@@ -84,10 +80,47 @@ CH_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "")
 CH_DB = os.getenv("CLICKHOUSE_DATABASE", "statground_polymarket")
 CH_IFACE = os.getenv("CLICKHOUSE_INTERFACE", "http").lower()  # http|native
 
-RAW_TABLE = os.getenv("RAW_TABLE", "polymarket_raw")
 EVENT_TABLE = os.getenv("EVENT_TABLE", "polymarket_event")
 MARKET_TABLE = os.getenv("MARKET_TABLE", "polymarket_market")
 SERIES_TABLE = os.getenv("SERIES_TABLE", "polymarket_series")
+
+ENTITY_TABLES = {
+    "events": EVENT_TABLE,
+    "markets": MARKET_TABLE,
+    "series": SERIES_TABLE,
+}
+
+_BASE_INSERT_COLUMNS = {
+    "events": [
+        "event_id", "raw_key", "collected_at_utc", "created_at_utc", "updated_at_utc",
+        "title", "ticker", "slug", "description",
+        "active", "archived", "closed", "restricted",
+        "start_date_utc", "end_date_utc", "closed_time_utc", "creation_date_utc",
+        "series_slug", "series_ids", "market_ids",
+        "icon_url", "image_url", "volume",
+    ],
+    "markets": [
+        "market_id", "raw_key", "collected_at_utc", "created_at_utc", "updated_at_utc",
+        "condition_id", "question_id", "slug", "question", "description",
+        "resolution_source", "resolved_by",
+        "active", "approved", "archived", "closed", "restricted", "neg_risk",
+        "start_date_utc", "end_date_utc", "closed_time_utc",
+        "best_ask", "best_bid", "last_trade_price", "spread", "volume",
+        "outcomes", "outcome_prices", "clob_token_ids",
+        "series_slug", "series_ids", "event_ids",
+    ],
+    "series": [
+        "series_id", "raw_key", "collected_at_utc", "created_at_utc", "updated_at_utc",
+        "slug", "ticker", "title",
+        "active", "archived", "closed",
+        "recurrence", "series_type",
+        "liquidity", "volume", "volume_24h",
+        "event_ids",
+    ],
+}
+
+_TABLE_SCHEMA_CACHE: Dict[str, Dict[str, str]] = {}
+_RAW_JSON_SKIP = object()
 
 
 # -------------------------
@@ -95,6 +128,7 @@ SERIES_TABLE = os.getenv("SERIES_TABLE", "polymarket_series")
 # -------------------------
 def utc_now_dt() -> datetime:
     return datetime.now(timezone.utc)
+
 
 def parse_iso_utc(s: Optional[str]) -> Optional[datetime]:
     if not s:
@@ -109,8 +143,10 @@ def parse_iso_utc(s: Optional[str]) -> Optional[datetime]:
     except Exception:
         return None
 
+
 def b01(v) -> int:
     return 1 if bool(v) else 0
+
 
 def safe_str(v) -> str:
     if v is None:
@@ -119,6 +155,7 @@ def safe_str(v) -> str:
         return json.dumps(v, ensure_ascii=False)
     return str(v)
 
+
 def safe_float(v) -> Optional[float]:
     if v is None or v == "":
         return None
@@ -126,6 +163,7 @@ def safe_float(v) -> Optional[float]:
         return float(v)
     except Exception:
         return None
+
 
 def safe_u64(v) -> Optional[int]:
     if v is None or v == "":
@@ -137,6 +175,7 @@ def safe_u64(v) -> Optional[int]:
         return x
     except Exception:
         return None
+
 
 def uuid7() -> uuid.UUID:
     """
@@ -183,6 +222,7 @@ def gh_api_json(method: str, url: str, token: str, payload: Optional[dict] = Non
     except Exception:
         return 0, {}
 
+
 def get_content(path: str) -> Tuple[Optional[str], bytes]:
     url = f"https://api.github.com/repos/{ORG}/{ORCHESTRATOR_REPO}/contents/{urllib.parse.quote(path)}?ref={DEFAULT_BRANCH}"
     code, obj = gh_api_json("GET", url, GH_TOKEN)
@@ -194,6 +234,7 @@ def get_content(path: str) -> Tuple[Optional[str], bytes]:
         import base64
         return sha, base64.b64decode(content_b64)
     return sha, b""
+
 
 def put_content(path: str, content_bytes: bytes, message: str):
     import base64
@@ -210,6 +251,7 @@ def put_content(path: str, content_bytes: bytes, message: str):
     if code not in (200, 201):
         raise RuntimeError(f"Failed to PUT {path}: status={code} resp={obj}")
 
+
 def load_checkpoint() -> Dict[str, str]:
     _, content = get_content(CHECKPOINT_PATH)
     if not content:
@@ -218,6 +260,7 @@ def load_checkpoint() -> Dict[str, str]:
         return json.loads(content.decode("utf-8")) or {}
     except Exception:
         return {}
+
 
 def save_checkpoint(checkpoint: Dict[str, str]):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -242,6 +285,7 @@ def http_get_json_with_meta(url: str, params: Dict[str, str], timeout: int = REQ
         body = resp.read().decode("utf-8")
         ms = int((time.time() - t0) * 1000)
         return json.loads(body), {"http_status": int(getattr(resp, "status", 200) or 200), "response_ms": ms, "full_url": full}
+
 
 def safe_get_json(url: str, params: Dict[str, str]) -> Tuple[Optional[object], dict]:
     last_meta = {}
@@ -287,6 +331,42 @@ def get_ch_client():
         interface=CH_IFACE,
     )
 
+
+def get_table_schema(ch, table_name: str) -> Dict[str, str]:
+    cache_key = f"{CH_DB}.{table_name}"
+    cached = _TABLE_SCHEMA_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    q = f"DESCRIBE TABLE {CH_DB}.{table_name}"
+    rows = ch.query(q).result_rows
+    schema = {str(r[0]): str(r[1]) for r in rows}
+    _TABLE_SCHEMA_CACHE[cache_key] = schema
+    return schema
+
+
+def get_insert_columns(entity: str, ch) -> List[str]:
+    columns = list(_BASE_INSERT_COLUMNS[entity])
+    table_name = ENTITY_TABLES[entity]
+    schema = get_table_schema(ch, table_name)
+    if "raw_json" in schema:
+        columns.append("raw_json")
+    return columns
+
+
+def prepare_raw_json_value(entity: str, obj: dict, ch):
+    table_name = ENTITY_TABLES[entity]
+    schema = get_table_schema(ch, table_name)
+    raw_type = schema.get("raw_json")
+    if not raw_type:
+        return _RAW_JSON_SKIP
+    # ClickHouse JSON type should accept native Python dict/list via clickhouse-connect.
+    # For String-compatible legacy schemas, fall back to JSON text.
+    if str(raw_type).upper().startswith("JSON"):
+        return obj
+    return json.dumps(obj, ensure_ascii=False)
+
+
 def extract_ids(arr, id_key="id") -> List[int]:
     out = []
     if not arr:
@@ -301,28 +381,12 @@ def extract_ids(arr, id_key="id") -> List[int]:
                 out.append(v)
     return out
 
-def to_raw_row(entity: str, obj: dict, meta: dict, params: dict, collected_at: datetime, raw_key: uuid.UUID) -> list:
-    oid = safe_u64(obj.get("id") or obj.get(f"{entity[:-1]}Id") or obj.get("event_id") or obj.get("market_id") or obj.get("series_id"))
-    if oid is None:
-        # best effort: some endpoints may use "eventId"/"marketId"
-        oid = safe_u64(obj.get("eventId") or obj.get("marketId") or obj.get("seriesId") or 0) or 0
-    return [
-        entity[:-1],                 # entity (event/market/series)
-        int(oid),                    # object_id
-        collected_at,                # collected_at_utc
-        raw_key,                     # raw_key UUID
-        meta.get("full_url",""),     # endpoint (store full url for trace)
-        json.dumps(params, ensure_ascii=False, sort_keys=True),  # request_params
-        int(meta.get("http_status", 200) or 200),
-        int(meta.get("response_ms", 0) or 0),
-        json.dumps(obj, ensure_ascii=False),  # body_json
-    ]
 
-def to_event_row(obj: dict, collected_at: datetime, raw_key: uuid.UUID) -> Optional[list]:
+def to_event_row(obj: dict, collected_at: datetime, raw_key: uuid.UUID, raw_json=_RAW_JSON_SKIP) -> Optional[list]:
     eid = safe_u64(obj.get("id") or obj.get("eventId") or obj.get("event_id"))
     if eid is None:
         return None
-    return [
+    row = [
         int(eid),
         raw_key,
         collected_at,
@@ -347,8 +411,12 @@ def to_event_row(obj: dict, collected_at: datetime, raw_key: uuid.UUID) -> Optio
         safe_str(obj.get("image")),
         safe_float(obj.get("volume")),
     ]
+    if raw_json is not _RAW_JSON_SKIP:
+        row.append(raw_json)
+    return row
 
-def to_market_row(obj: dict, collected_at: datetime, raw_key: uuid.UUID) -> Optional[list]:
+
+def to_market_row(obj: dict, collected_at: datetime, raw_key: uuid.UUID, raw_json=_RAW_JSON_SKIP) -> Optional[list]:
     mid = safe_u64(obj.get("id") or obj.get("marketId") or obj.get("market_id"))
     if mid is None:
         return None
@@ -361,7 +429,7 @@ def to_market_row(obj: dict, collected_at: datetime, raw_key: uuid.UUID) -> Opti
     clob_token_ids = obj.get("clobTokenIds")
     if not isinstance(clob_token_ids, list):
         clob_token_ids = []
-    return [
+    row = [
         int(mid),
         raw_key,
         collected_at,
@@ -395,12 +463,16 @@ def to_market_row(obj: dict, collected_at: datetime, raw_key: uuid.UUID) -> Opti
         extract_ids(obj.get("series")),
         extract_ids(obj.get("events")) or extract_ids(obj.get("eventIds")),
     ]
+    if raw_json is not _RAW_JSON_SKIP:
+        row.append(raw_json)
+    return row
 
-def to_series_row(obj: dict, collected_at: datetime, raw_key: uuid.UUID) -> Optional[list]:
+
+def to_series_row(obj: dict, collected_at: datetime, raw_key: uuid.UUID, raw_json=_RAW_JSON_SKIP) -> Optional[list]:
     sid = safe_u64(obj.get("id") or obj.get("seriesId") or obj.get("series_id"))
     if sid is None:
         return None
-    return [
+    row = [
         int(sid),
         raw_key,
         collected_at,
@@ -419,6 +491,27 @@ def to_series_row(obj: dict, collected_at: datetime, raw_key: uuid.UUID) -> Opti
         safe_float(obj.get("volume24hr") or obj.get("volume24h")),
         extract_ids(obj.get("events")) or extract_ids(obj.get("eventIds")),
     ]
+    if raw_json is not _RAW_JSON_SKIP:
+        row.append(raw_json)
+    return row
+
+
+def build_entity_row(entity: str, obj: dict, collected_at: datetime, raw_key: uuid.UUID, ch) -> Optional[list]:
+    raw_json = prepare_raw_json_value(entity, obj, ch)
+    if entity == "events":
+        return to_event_row(obj, collected_at, raw_key, raw_json=raw_json)
+    if entity == "markets":
+        return to_market_row(obj, collected_at, raw_key, raw_json=raw_json)
+    if entity == "series":
+        return to_series_row(obj, collected_at, raw_key, raw_json=raw_json)
+    raise ValueError(f"Unknown entity: {entity}")
+
+
+def insert_entity_rows(entity: str, ch, rows: List[list]) -> None:
+    if not rows:
+        return
+    table_name = ENTITY_TABLES[entity]
+    ch.insert(table_name, rows, column_names=get_insert_columns(entity, ch))
 
 
 def iso_leq(a: str, b: str) -> bool:
@@ -429,6 +522,9 @@ def iso_leq(a: str, b: str) -> bool:
     return da <= db
 
 
+# -------------------------
+# Fetch/insert loop
+# -------------------------
 def pick_order(entity: str) -> str:
     url = ENDPOINTS[entity]
     for order in (ORDER_PRIMARY, ORDER_FALLBACK):
@@ -453,7 +549,6 @@ def fetch_and_insert(entity: str, checkpoint: Dict[str, str], ch) -> Tuple[int, 
     order_used = pick_order(entity)
     print(f"[FETCH] {entity} order={order_used} checkpoint={(last_cp or '(none)')}")
 
-    raw_rows: List[list] = []
     norm_rows: List[list] = []
     total_written = 0
 
@@ -487,82 +582,20 @@ def fetch_and_insert(entity: str, checkpoint: Dict[str, str], ch) -> Tuple[int, 
                 break
 
             rk = uuid7()
-            raw_rows.append(to_raw_row(entity, obj, meta, params, collected_at, rk))
+            row = build_entity_row(entity, obj, collected_at, rk, ch)
+            if row:
+                norm_rows.append(row)
+                total_written += 1
 
-            if entity == "events":
-                row = to_event_row(obj, collected_at, rk)
-                if row:
-                    norm_rows.append(row)
-            elif entity == "markets":
-                row = to_market_row(obj, collected_at, rk)
-                if row:
-                    norm_rows.append(row)
-            elif entity == "series":
-                row = to_series_row(obj, collected_at, rk)
-                if row:
-                    norm_rows.append(row)
-
-            total_written += 1
             if updated and (not best_seen or not iso_leq(updated, best_seen)):
                 best_seen = updated
 
         # flush per page (keeps memory bounded)
-        if raw_rows:
-            ch.insert(
-                RAW_TABLE,
-                raw_rows,
-                column_names=[
-                    "entity","object_id","collected_at_utc","raw_key","endpoint","request_params",
-                    "http_status","response_ms","body_json"
-                ],
-            )
-            raw_rows.clear()
-
         if norm_rows:
-            if entity == "events":
-                ch.insert(
-                    EVENT_TABLE,
-                    norm_rows,
-                    column_names=[
-                        "event_id","raw_key","collected_at_utc","created_at_utc","updated_at_utc",
-                        "title","ticker","slug","description",
-                        "active","archived","closed","restricted",
-                        "start_date_utc","end_date_utc","closed_time_utc","creation_date_utc",
-                        "series_slug","series_ids","market_ids",
-                        "icon_url","image_url","volume"
-                    ],
-                )
-            elif entity == "markets":
-                ch.insert(
-                    MARKET_TABLE,
-                    norm_rows,
-                    column_names=[
-                        "market_id","raw_key","collected_at_utc","created_at_utc","updated_at_utc",
-                        "condition_id","question_id","slug","question","description",
-                        "resolution_source","resolved_by",
-                        "active","approved","archived","closed","restricted","neg_risk",
-                        "start_date_utc","end_date_utc","closed_time_utc",
-                        "best_ask","best_bid","last_trade_price","spread","volume",
-                        "outcomes","outcome_prices","clob_token_ids",
-                        "series_slug","series_ids","event_ids"
-                    ],
-                )
-            else:  # series
-                ch.insert(
-                    SERIES_TABLE,
-                    norm_rows,
-                    column_names=[
-                        "series_id","raw_key","collected_at_utc","created_at_utc","updated_at_utc",
-                        "slug","ticker","title",
-                        "active","archived","closed",
-                        "recurrence","series_type",
-                        "liquidity","volume","volume_24h",
-                        "event_ids"
-                    ],
-                )
+            insert_entity_rows(entity, ch, norm_rows)
             norm_rows.clear()
 
-        print(f"[{entity}] page={page+1} offset={offset} inserted={total_written}")
+        print(f"[{entity}] page={page+1} offset={offset} inserted={total_written} http_status={meta.get('http_status')}")
         if stop:
             print(f"[{entity}] reached checkpoint -> stop")
             break
@@ -571,6 +604,17 @@ def fetch_and_insert(entity: str, checkpoint: Dict[str, str], ch) -> Tuple[int, 
         time.sleep(BASE_SLEEP)
 
     return total_written, (best_seen if best_seen else None)
+
+
+def optimize_after_batch(ch) -> None:
+    optimize_random_partitions(
+        ch,
+        [
+            f"{CH_DB}.{EVENT_TABLE}",
+            f"{CH_DB}.{MARKET_TABLE}",
+            f"{CH_DB}.{SERIES_TABLE}",
+        ],
+    )
 
 
 def main():
@@ -589,7 +633,9 @@ def main():
             new_checkpoint[entity] = new_cp
 
     save_checkpoint(new_checkpoint)
+    optimize_after_batch(ch)
     print(f"\nDONE. inserted_objects={wrote_total}")
+
 
 if __name__ == "__main__":
     main()

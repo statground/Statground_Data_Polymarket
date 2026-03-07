@@ -2,21 +2,18 @@
 """Polymarket refresh + gap-fill (ClickHouse).
 
 Purpose:
-- Re-fetch a *lookback window* of updates for each entity (series/events/markets)
-  and insert into ClickHouse (raw + normalized).
-- This helps keep existing records up-to-date and backfills missed objects that
+- Re-fetch a lookback window of updates for each entity (series/events/markets)
+  and insert into ClickHouse normalized tables.
+- Each normalized row also stores the original API payload in raw_json.
+- This keeps existing records up-to-date and backfills missed objects that
   were updated within the lookback period.
 
 How it works:
 1) For each entity, read the current max(updated_at_utc) from ClickHouse.
-2) Compute refresh_until = max_updated_at - 
-
-def entity_singular(entity: str) -> str:
-    return entity[:-1] if entity.endswith('s') else entity
-LOOKBACK_HOURS.
+2) Compute refresh_until = max_updated_at - LOOKBACK_HOURS.
 3) Pull from Polymarket API ordered by updatedAt desc, and stop once updatedAt <= refresh_until.
 4) Insert all fetched objects (even duplicates). Your tables use ReplacingMergeTree,
-   so use FINAL / argMax in analytics as needed.
+   so use argMax / max(collected_at_utc) patterns in analytics as needed.
 
 Env:
 - Same ClickHouse env vars as polymarket_crawl_to_clickhouse.py
@@ -26,30 +23,26 @@ Env:
 Outputs:
 - Writes a JSON report to ./artifacts/polymarket_refresh_report.json
 """
+from __future__ import annotations
 
-import os, json
-from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional, Tuple
-
-import clickhouse_connect
-from scripts.clickhouse_optimize import optimize_random_partitions
+import json
+import os
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 # Reuse most helpers from the incremental crawler
 import scripts.polymarket_crawl_to_clickhouse as pm
 
 LOOKBACK_HOURS = int(os.getenv("LOOKBACK_HOURS", "72"))
 
+
 def _dt_to_iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
+
 def _ch_max_updated(entity: str, ch) -> Optional[datetime]:
-    tbl = {
-        "events": pm.EVENT_TABLE,
-        "markets": pm.MARKET_TABLE,
-        "series": pm.SERIES_TABLE,
-    }[entity]
-    # updated_at_utc is Nullable(DateTime64) in most designs; handle NULLs.
-    q = f"""SELECT max(ifNull(updated_at_utc, collected_at_utc)) AS mx FROM {pm.CH_DB}.{tbl}"""
+    tbl = pm.ENTITY_TABLES[entity]
+    q = f"SELECT max(ifNull(updated_at_utc, collected_at_utc)) AS mx FROM {pm.CH_DB}.{tbl}"
     try:
         r = ch.query(q)
         mx = r.result_rows[0][0] if r.result_rows else None
@@ -57,12 +50,12 @@ def _ch_max_updated(entity: str, ch) -> Optional[datetime]:
     except Exception:
         return None
 
+
 def fetch_refresh_window(entity: str, ch, refresh_until_iso: str) -> int:
     url = pm.ENDPOINTS[entity]
     order_used = pm.pick_order(entity)
     total_written = 0
-    raw_rows: List[list] = []
-    norm_rows: List[list] = []
+    norm_rows = []
 
     for page in range(pm.MAX_PAGES):
         offset = page * pm.PAGE_LIMIT
@@ -96,82 +89,21 @@ def fetch_refresh_window(entity: str, ch, refresh_until_iso: str) -> int:
                 break
 
             rk = pm.uuid7()
-            raw_rows.append(pm.to_raw_row(entity, obj, meta, params, collected_at, rk))
-
-            if entity == "events":
-                row = pm.to_event_row(obj, collected_at, rk)
-            elif entity == "markets":
-                row = pm.to_market_row(obj, collected_at, rk)
-            else:
-                row = pm.to_series_row(obj, collected_at, rk)
-
+            row = pm.build_entity_row(entity, obj, collected_at, rk, ch)
             if row:
                 norm_rows.append(row)
-
-            total_written += 1
-
-        # flush per page
-        if raw_rows:
-            ch.insert(
-                pm.RAW_TABLE,
-                raw_rows,
-                column_names=[
-                    "entity","object_id","collected_at_utc","raw_key","endpoint","request_params",
-                    "http_status","response_ms","body_json"
-                ],
-            )
-            raw_rows.clear()
+                total_written += 1
 
         if norm_rows:
-            if entity == "events":
-                ch.insert(
-                    pm.EVENT_TABLE,
-                    norm_rows,
-                    column_names=[
-                        "event_id","raw_key","collected_at_utc","created_at_utc","updated_at_utc",
-                        "title","ticker","slug","description",
-                        "active","archived","closed","restricted",
-                        "start_date_utc","end_date_utc","closed_time_utc","creation_date_utc",
-                        "series_slug","series_ids","market_ids",
-                        "icon_url","image_url","volume"
-                    ],
-                )
-            elif entity == "markets":
-                ch.insert(
-                    pm.MARKET_TABLE,
-                    norm_rows,
-                    column_names=[
-                                                "market_id","raw_key","collected_at_utc","created_at_utc","updated_at_utc",
-                        "condition_id","question_id","slug","question","description",
-                        "resolution_source","resolved_by",
-                        "active","approved","archived","closed","restricted","neg_risk",
-                        "start_date_utc","end_date_utc","closed_time_utc",
-                        "best_ask","best_bid","last_trade_price","spread","volume",
-                        "outcomes","outcome_prices","clob_token_ids",
-                        "series_slug","series_ids","event_ids"
-
-                    ],
-                )
-            else:
-                ch.insert(
-                    pm.SERIES_TABLE,
-                    norm_rows,
-                    column_names=[
-                                                "series_id","raw_key","collected_at_utc","created_at_utc","updated_at_utc",
-                        "slug","ticker","title",
-                        "active","archived","closed",
-                        "recurrence","series_type",
-                        "liquidity","volume","volume_24h",
-                        "event_ids"
-
-                    ],
-                )
+            pm.insert_entity_rows(entity, ch, norm_rows)
             norm_rows.clear()
 
+        print(f"[{entity}] page={page+1} offset={offset} inserted={total_written} http_status={meta.get('http_status')}")
         if stop:
             break
 
     return total_written
+
 
 def main():
     ch = pm.get_ch_client()
@@ -215,11 +147,13 @@ def main():
             "refresh_until_utc": refresh_until_iso,
         }
 
+    pm.optimize_after_batch(ch)
     report["inserted_objects_total"] = wrote_total
     out_path = os.path.join("artifacts", "polymarket_refresh_report.json")
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
     print(f"\nDONE. inserted_objects_total={wrote_total} report={out_path}")
+
 
 if __name__ == "__main__":
     main()
