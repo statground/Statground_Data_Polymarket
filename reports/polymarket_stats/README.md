@@ -58,9 +58,9 @@ It intentionally avoids internal storage/implementation details.
 
 ## Event
 
-- Total unique IDs: **241182**
-- Created range: 2022-07-27 14:40:02 UTC ~ 2026-03-07 08:32:24 UTC
-- Collected range: 2026-02-17 19:39:34 UTC ~ 2026-03-07 08:37:35 UTC
+- Total unique IDs: **241104**
+- Created range: 2022-07-27 14:40:02 UTC ~ 2026-03-07 07:37:09 UTC
+- Collected range: 2026-02-17 19:39:34 UTC ~ 2026-03-07 07:44:00 UTC
 
 
 ### Created time
@@ -109,9 +109,9 @@ It intentionally avoids internal storage/implementation details.
 
 ## Market
 
-- Total unique IDs: **587258**
-- Created range: 2020-10-02 16:10:01 UTC ~ 2026-03-07 07:45:22 UTC
-- Collected range: 2026-02-28 10:01:20 UTC ~ 2026-03-07 08:37:51 UTC
+- Total unique IDs: **587252**
+- Created range: 2020-10-02 16:10:01 UTC ~ 2026-03-07 07:42:00 UTC
+- Collected range: 2026-02-28 10:01:20 UTC ~ 2026-03-07 07:48:22 UTC
 
 
 ### Created time

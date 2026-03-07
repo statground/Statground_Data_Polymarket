@@ -3,10 +3,10 @@ name: Polymarket - Ingest NEW series/events/markets (UTC)
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'  # every 1 hour (UTC)
+    - cron: '0 * * * *'  # every hour at :00 (UTC)
 
 concurrency:
-  group: polymarket-ingest-new-${{ github.ref }}
+  group: polymarket-pipeline-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -64,33 +64,11 @@ jobs:
 
       - name: Sync latest repository state
         run: |
-          git pull --rebase origin "${DEFAULT_BRANCH}"
-          mkdir -p artifacts
-          if [ -f .state/polymarket_checkpoint.json ]; then cp .state/polymarket_checkpoint.json artifacts/; fi
+          git fetch origin "${DEFAULT_BRANCH}"
+          git checkout -B "${DEFAULT_BRANCH}" "origin/${DEFAULT_BRANCH}"
 
-      - name: Generate stats report
+      - name: Generate + push stats report safely
+        env:
+          STATS_COMMIT_MESSAGE: "chore(stats): update polymarket stats after ingest (UTC)"
         run: |
-          python -m scripts.polymarket_stats_report
-
-      - name: Commit reports (md + charts only)
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add reports/polymarket_stats/README.md reports/polymarket_stats/charts/*.png
-
-          if git diff --cached --quiet; then
-            echo "[STATS] No changes to commit."
-            exit 0
-          fi
-
-          git commit -m "chore(stats): update polymarket stats after ingest (UTC)"
-          git pull --rebase origin "${DEFAULT_BRANCH}"
-          git push origin "HEAD:${DEFAULT_BRANCH}"
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: polymarket_ingest_new_artifacts
-          path: artifacts/*
-          if-no-files-found: ignore
+          python -m scripts.polymarket_sync_and_push_stats

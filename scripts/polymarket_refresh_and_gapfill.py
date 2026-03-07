@@ -21,7 +21,7 @@ Env:
 - PAGE_LIMIT, MAX_PAGES, POLY_BASE, ORDER_PRIMARY, ORDER_FALLBACK (optional)
 
 Outputs:
-- Writes a JSON report to ./artifacts/polymarket_refresh_report.json
+- Optionally writes a JSON report when REFRESH_REPORT_PATH is set.
 """
 from __future__ import annotations
 
@@ -34,6 +34,7 @@ from typing import Optional
 import scripts.polymarket_crawl_to_clickhouse as pm
 
 LOOKBACK_HOURS = int(os.getenv("LOOKBACK_HOURS", "72"))
+REFRESH_REPORT_PATH = os.getenv("REFRESH_REPORT_PATH", "").strip()
 
 
 def _dt_to_iso(dt: datetime) -> str:
@@ -107,8 +108,6 @@ def fetch_refresh_window(entity: str, ch, refresh_until_iso: str) -> int:
 
 def main():
     ch = pm.get_ch_client()
-    os.makedirs("artifacts", exist_ok=True)
-
     report = {
         "run_at_utc": _dt_to_iso(datetime.now(timezone.utc)),
         "lookback_hours": LOOKBACK_HOURS,
@@ -149,10 +148,16 @@ def main():
 
     pm.optimize_after_batch(ch)
     report["inserted_objects_total"] = wrote_total
-    out_path = os.path.join("artifacts", "polymarket_refresh_report.json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
-    print(f"\nDONE. inserted_objects_total={wrote_total} report={out_path}")
+
+    if REFRESH_REPORT_PATH:
+        out_dir = os.path.dirname(REFRESH_REPORT_PATH)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        with open(REFRESH_REPORT_PATH, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        print(f"[REPORT] wrote refresh report -> {REFRESH_REPORT_PATH}")
+
+    print(f"\nDONE. inserted_objects_total={wrote_total}")
 
 
 if __name__ == "__main__":
