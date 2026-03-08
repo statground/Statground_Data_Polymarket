@@ -71,6 +71,13 @@ INSERT_BATCH_SIZE = int(os.getenv("INSERT_BATCH_SIZE", "1000"))
 INSERT_MAX_RETRIES = int(os.getenv("INSERT_MAX_RETRIES", "4"))
 INSERT_RETRY_BASE_SLEEP = float(os.getenv("INSERT_RETRY_BASE_SLEEP", "1.0"))
 
+INSERT_MAX_PARTITIONS_PER_BLOCK = int(
+    os.getenv("INSERT_MAX_PARTITIONS_PER_BLOCK", os.getenv("OPTIMIZE_PARTITIONS", "128"))
+)
+INSERT_THROW_ON_MAX_PARTITIONS_PER_BLOCK = os.getenv(
+    "INSERT_THROW_ON_MAX_PARTITIONS_PER_BLOCK", "1"
+).strip().lower() in ("1", "true", "yes", "y")
+
 # GitHub Contents API for checkpoint/state
 ORG = os.getenv("ORG", "statground")
 ORCHESTRATOR_REPO = os.getenv("ORCHESTRATOR_REPO", "Statground_Data_Polymarket")
@@ -518,6 +525,18 @@ def build_entity_row(entity: str, obj: dict, collected_at: datetime, raw_key: uu
     raise ValueError(f"Unknown entity: {entity}")
 
 
+def get_insert_settings() -> Dict[str, object]:
+    settings: Dict[str, object] = {}
+
+    if INSERT_MAX_PARTITIONS_PER_BLOCK > 0:
+        settings["max_partitions_per_insert_block"] = INSERT_MAX_PARTITIONS_PER_BLOCK
+
+    settings["throw_on_max_partitions_per_insert_block"] = (
+        1 if INSERT_THROW_ON_MAX_PARTITIONS_PER_BLOCK else 0
+    )
+    return settings
+    
+
 def _is_retryable_insert_error(ex: Exception) -> bool:
     cls_name = ex.__class__.__name__.lower()
     msg = str(ex).lower()
@@ -541,26 +560,36 @@ def _is_retryable_insert_error(ex: Exception) -> bool:
 def insert_entity_rows(entity: str, ch, rows: List[list]):
     if not rows:
         return ch
+
     table_name = ENTITY_TABLES[entity]
     insert_columns = get_insert_columns(entity, ch)
+    insert_settings = get_insert_settings()
 
     for attempt in range(1, INSERT_MAX_RETRIES + 1):
         try:
-            ch.insert(table_name, rows, column_names=insert_columns)
+            ch.insert(
+                table_name,
+                rows,
+                column_names=insert_columns,
+                settings=insert_settings,
+            )
             return ch
         except Exception as ex:
             if attempt >= INSERT_MAX_RETRIES or not _is_retryable_insert_error(ex):
                 raise
+
             sleep_s = min(60.0, INSERT_RETRY_BASE_SLEEP * (2 ** (attempt - 1))) + random.random()
             print(
                 f"[INSERT RETRY] entity={entity} rows={len(rows)} attempt={attempt}/{INSERT_MAX_RETRIES} "
                 f"sleep={sleep_s:.1f}s err={ex}",
                 flush=True,
             )
+
             try:
                 ch.close()
             except Exception:
                 pass
+
             time.sleep(sleep_s)
             ch = get_ch_client()
 
@@ -682,6 +711,12 @@ def main():
     if not GH_TOKEN:
         raise RuntimeError("Need GH_TOKEN or GITHUB_TOKEN (Actions provides GITHUB_TOKEN automatically).")
     ch = get_ch_client()
+    print(
+        f"[CONFIG] insert_batch_size={INSERT_BATCH_SIZE} "
+        f"max_partitions_per_insert_block={INSERT_MAX_PARTITIONS_PER_BLOCK} "
+        f"throw_on_max_partitions_per_insert_block={1 if INSERT_THROW_ON_MAX_PARTITIONS_PER_BLOCK else 0}",
+        flush=True,
+    )
 
     checkpoint = load_checkpoint()
     new_checkpoint = dict(checkpoint)
