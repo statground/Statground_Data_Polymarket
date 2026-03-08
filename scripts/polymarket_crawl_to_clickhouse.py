@@ -64,6 +64,13 @@ REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "30"))
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "6"))
 BASE_SLEEP = float(os.getenv("BASE_SLEEP", "0.2"))
 
+CH_CONNECT_TIMEOUT = int(os.getenv("CH_CONNECT_TIMEOUT", "10"))
+CH_SEND_RECEIVE_TIMEOUT = int(os.getenv("CH_SEND_RECEIVE_TIMEOUT", "900"))
+CH_QUERY_RETRIES = int(os.getenv("CH_QUERY_RETRIES", "2"))
+INSERT_BATCH_SIZE = int(os.getenv("INSERT_BATCH_SIZE", "1000"))
+INSERT_MAX_RETRIES = int(os.getenv("INSERT_MAX_RETRIES", "4"))
+INSERT_RETRY_BASE_SLEEP = float(os.getenv("INSERT_RETRY_BASE_SLEEP", "1.0"))
+
 # GitHub Contents API for checkpoint/state
 ORG = os.getenv("ORG", "statground")
 ORCHESTRATOR_REPO = os.getenv("ORCHESTRATOR_REPO", "Statground_Data_Polymarket")
@@ -329,6 +336,10 @@ def get_ch_client():
         password=CH_PASSWORD,
         database=CH_DB,
         interface=CH_IFACE,
+        connect_timeout=CH_CONNECT_TIMEOUT,
+        send_receive_timeout=CH_SEND_RECEIVE_TIMEOUT,
+        query_retries=CH_QUERY_RETRIES,
+        client_name="statground-polymarket-crawler",
     )
 
 
@@ -507,11 +518,62 @@ def build_entity_row(entity: str, obj: dict, collected_at: datetime, raw_key: uu
     raise ValueError(f"Unknown entity: {entity}")
 
 
-def insert_entity_rows(entity: str, ch, rows: List[list]) -> None:
+def _is_retryable_insert_error(ex: Exception) -> bool:
+    cls_name = ex.__class__.__name__.lower()
+    msg = str(ex).lower()
+    if isinstance(ex, TimeoutError):
+        return True
+    if "operationalerror" in cls_name or "protocolerror" in cls_name:
+        return True
+    retry_markers = (
+        "timed out",
+        "timeout",
+        "connection aborted",
+        "connection reset",
+        "broken pipe",
+        "remote disconnected",
+        "temporarily unavailable",
+        "network",
+    )
+    return any(marker in msg for marker in retry_markers)
+
+
+def insert_entity_rows(entity: str, ch, rows: List[list]):
     if not rows:
-        return
+        return ch
     table_name = ENTITY_TABLES[entity]
-    ch.insert(table_name, rows, column_names=get_insert_columns(entity, ch))
+    insert_columns = get_insert_columns(entity, ch)
+
+    for attempt in range(1, INSERT_MAX_RETRIES + 1):
+        try:
+            ch.insert(table_name, rows, column_names=insert_columns)
+            return ch
+        except Exception as ex:
+            if attempt >= INSERT_MAX_RETRIES or not _is_retryable_insert_error(ex):
+                raise
+            sleep_s = min(60.0, INSERT_RETRY_BASE_SLEEP * (2 ** (attempt - 1))) + random.random()
+            print(
+                f"[INSERT RETRY] entity={entity} rows={len(rows)} attempt={attempt}/{INSERT_MAX_RETRIES} "
+                f"sleep={sleep_s:.1f}s err={ex}",
+                flush=True,
+            )
+            try:
+                ch.close()
+            except Exception:
+                pass
+            time.sleep(sleep_s)
+            ch = get_ch_client()
+
+    return ch
+
+
+def flush_entity_rows(entity: str, ch, row_buffer: List[list], force: bool = False):
+    while row_buffer and (force or len(row_buffer) >= INSERT_BATCH_SIZE):
+        batch_len = min(len(row_buffer), INSERT_BATCH_SIZE)
+        batch = row_buffer[:batch_len]
+        ch = insert_entity_rows(entity, ch, batch)
+        del row_buffer[:batch_len]
+    return ch
 
 
 def iso_leq(a: str, b: str) -> bool:
@@ -541,7 +603,7 @@ def pick_order(entity: str) -> str:
     raise RuntimeError(f"Failed to fetch {entity}: API returned non-list for both orders.")
 
 
-def fetch_and_insert(entity: str, checkpoint: Dict[str, str], ch) -> Tuple[int, Optional[str]]:
+def fetch_and_insert(entity: str, checkpoint: Dict[str, str], ch) -> Tuple[int, Optional[str], object]:
     url = ENDPOINTS[entity]
     last_cp = checkpoint.get(entity, "")
     best_seen = last_cp
@@ -590,10 +652,7 @@ def fetch_and_insert(entity: str, checkpoint: Dict[str, str], ch) -> Tuple[int, 
             if updated and (not best_seen or not iso_leq(updated, best_seen)):
                 best_seen = updated
 
-        # flush per page (keeps memory bounded)
-        if norm_rows:
-            insert_entity_rows(entity, ch, norm_rows)
-            norm_rows.clear()
+        ch = flush_entity_rows(entity, ch, norm_rows)
 
         print(f"[{entity}] page={page+1} offset={offset} inserted={total_written} http_status={meta.get('http_status')}")
         if stop:
@@ -601,9 +660,11 @@ def fetch_and_insert(entity: str, checkpoint: Dict[str, str], ch) -> Tuple[int, 
             break
         if len(items) < PAGE_LIMIT:
             break
-        time.sleep(BASE_SLEEP)
+        if BASE_SLEEP > 0:
+            time.sleep(BASE_SLEEP)
 
-    return total_written, (best_seen if best_seen else None)
+    ch = flush_entity_rows(entity, ch, norm_rows, force=True)
+    return total_written, (best_seen if best_seen else None), ch
 
 
 def optimize_after_batch(ch) -> None:
@@ -627,7 +688,7 @@ def main():
 
     wrote_total = 0
     for entity in ("events", "markets", "series"):
-        wrote, new_cp = fetch_and_insert(entity, checkpoint, ch)
+        wrote, new_cp, ch = fetch_and_insert(entity, checkpoint, ch)
         wrote_total += wrote
         if new_cp:
             new_checkpoint[entity] = new_cp

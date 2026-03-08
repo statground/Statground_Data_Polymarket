@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -52,7 +53,7 @@ def _ch_max_updated(entity: str, ch) -> Optional[datetime]:
         return None
 
 
-def fetch_refresh_window(entity: str, ch, refresh_until_iso: str) -> int:
+def fetch_refresh_window(entity: str, ch, refresh_until_iso: str):
     url = pm.ENDPOINTS[entity]
     order_used = pm.pick_order(entity)
     total_written = 0
@@ -95,15 +96,18 @@ def fetch_refresh_window(entity: str, ch, refresh_until_iso: str) -> int:
                 norm_rows.append(row)
                 total_written += 1
 
-        if norm_rows:
-            pm.insert_entity_rows(entity, ch, norm_rows)
-            norm_rows.clear()
+        ch = pm.flush_entity_rows(entity, ch, norm_rows)
 
         print(f"[{entity}] page={page+1} offset={offset} inserted={total_written} http_status={meta.get('http_status')}")
         if stop:
             break
+        if len(items) < pm.PAGE_LIMIT:
+            break
+        if pm.BASE_SLEEP > 0:
+            time.sleep(pm.BASE_SLEEP)
 
-    return total_written
+    ch = pm.flush_entity_rows(entity, ch, norm_rows, force=True)
+    return total_written, ch
 
 
 def main():
@@ -121,7 +125,7 @@ def main():
             # If table is empty, just run the incremental crawler for that entity using checkpoint.
             print(f"[INFO] {entity}: no max(updated_at_utc). Falling back to incremental ingestion.")
             checkpoint = pm.load_checkpoint()
-            wrote, new_cp = pm.fetch_and_insert(entity, checkpoint, ch)
+            wrote, new_cp, ch = pm.fetch_and_insert(entity, checkpoint, ch)
             wrote_total += wrote
             if new_cp:
                 checkpoint[entity] = new_cp
@@ -137,7 +141,7 @@ def main():
         refresh_until_iso = _dt_to_iso(refresh_until)
 
         print(f"[REFRESH] {entity}: max_updated_at_utc={mx} refresh_until={refresh_until_iso}")
-        wrote = fetch_refresh_window(entity, ch, refresh_until_iso)
+        wrote, ch = fetch_refresh_window(entity, ch, refresh_until_iso)
         wrote_total += wrote
         report["entities"][entity] = {
             "mode": "lookback_refresh",

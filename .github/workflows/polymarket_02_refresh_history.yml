@@ -19,9 +19,14 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.POLYMARKET_PAT }}
       POLY_BASE: https://gamma-api.polymarket.com
+      PYTHONUNBUFFERED: "1"
 
       # Lookback window for refresh / gap-fill
       LOOKBACK_HOURS: ${{ vars.POLYMARKET_LOOKBACK_HOURS || '72' }}
+      MAX_PAGES: ${{ vars.POLYMARKET_REFRESH_MAX_PAGES || '500' }}
+      INSERT_BATCH_SIZE: ${{ vars.POLYMARKET_INSERT_BATCH_SIZE || '1000' }}
+      INSERT_MAX_RETRIES: ${{ vars.POLYMARKET_INSERT_MAX_RETRIES || '4' }}
+      CH_SEND_RECEIVE_TIMEOUT: ${{ vars.POLYMARKET_CH_SEND_RECEIVE_TIMEOUT || '900' }}
 
       ORG: statground
       ORCHESTRATOR_REPO: Statground_Data_Polymarket
