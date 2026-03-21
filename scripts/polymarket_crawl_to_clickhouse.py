@@ -68,8 +68,13 @@ CH_CONNECT_TIMEOUT = int(os.getenv("CH_CONNECT_TIMEOUT", "10"))
 CH_SEND_RECEIVE_TIMEOUT = int(os.getenv("CH_SEND_RECEIVE_TIMEOUT", "900"))
 CH_QUERY_RETRIES = int(os.getenv("CH_QUERY_RETRIES", "2"))
 INSERT_BATCH_SIZE = int(os.getenv("INSERT_BATCH_SIZE", "1000"))
+INSERT_BATCH_SIZE_EVENTS = int(os.getenv("INSERT_BATCH_SIZE_EVENTS", str(INSERT_BATCH_SIZE)))
+INSERT_BATCH_SIZE_MARKETS = int(os.getenv("INSERT_BATCH_SIZE_MARKETS", str(INSERT_BATCH_SIZE)))
+INSERT_BATCH_SIZE_SERIES = int(os.getenv("INSERT_BATCH_SIZE_SERIES", str(min(INSERT_BATCH_SIZE, 200))))
 INSERT_MAX_RETRIES = int(os.getenv("INSERT_MAX_RETRIES", "4"))
 INSERT_RETRY_BASE_SLEEP = float(os.getenv("INSERT_RETRY_BASE_SLEEP", "1.0"))
+INSERT_SPLIT_AFTER_ATTEMPT = max(1, int(os.getenv("INSERT_SPLIT_AFTER_ATTEMPT", "2")))
+INSERT_MIN_SPLIT_BATCH_ROWS = max(2, int(os.getenv("INSERT_MIN_SPLIT_BATCH_ROWS", "25")))
 
 INSERT_MAX_PARTITIONS_PER_BLOCK = int(
     os.getenv("INSERT_MAX_PARTITIONS_PER_BLOCK", os.getenv("OPTIMIZE_PARTITIONS", "128"))
@@ -135,6 +140,12 @@ _BASE_INSERT_COLUMNS = {
 
 _TABLE_SCHEMA_CACHE: Dict[str, Dict[str, str]] = {}
 _RAW_JSON_SKIP = object()
+
+_ENTITY_INSERT_BATCH_SIZES = {
+    "events": max(1, INSERT_BATCH_SIZE_EVENTS),
+    "markets": max(1, INSERT_BATCH_SIZE_MARKETS),
+    "series": max(1, INSERT_BATCH_SIZE_SERIES),
+}
 
 
 # -------------------------
@@ -535,7 +546,29 @@ def get_insert_settings() -> Dict[str, object]:
         1 if INSERT_THROW_ON_MAX_PARTITIONS_PER_BLOCK else 0
     )
     return settings
-    
+
+
+def get_entity_insert_batch_size(entity: str) -> int:
+    return _ENTITY_INSERT_BATCH_SIZES.get(entity, max(1, INSERT_BATCH_SIZE))
+
+
+def reset_ch_client(ch, sleep_s: float = 0.0):
+    for method_name in ("close_connections", "close"):
+        method = getattr(ch, method_name, None)
+        if callable(method):
+            try:
+                method()
+            except Exception:
+                pass
+    if sleep_s > 0:
+        time.sleep(sleep_s)
+    return get_ch_client()
+
+
+def split_rows(rows: List[list]) -> Tuple[List[list], List[list]]:
+    mid = max(1, len(rows) // 2)
+    return rows[:mid], rows[mid:]
+
 
 def _is_retryable_insert_error(ex: Exception) -> bool:
     cls_name = ex.__class__.__name__.lower()
@@ -575,7 +608,26 @@ def insert_entity_rows(entity: str, ch, rows: List[list]):
             )
             return ch
         except Exception as ex:
-            if attempt >= INSERT_MAX_RETRIES or not _is_retryable_insert_error(ex):
+            retryable = _is_retryable_insert_error(ex)
+            should_split = (
+                retryable
+                and len(rows) >= INSERT_MIN_SPLIT_BATCH_ROWS
+                and attempt >= INSERT_SPLIT_AFTER_ATTEMPT
+            )
+
+            if should_split:
+                left_rows, right_rows = split_rows(rows)
+                print(
+                    f"[INSERT SPLIT] entity={entity} rows={len(rows)} -> {len(left_rows)}+{len(right_rows)} "
+                    f"attempt={attempt}/{INSERT_MAX_RETRIES} err={ex}",
+                    flush=True,
+                )
+                ch = reset_ch_client(ch)
+                ch = insert_entity_rows(entity, ch, left_rows)
+                ch = insert_entity_rows(entity, ch, right_rows)
+                return ch
+
+            if attempt >= INSERT_MAX_RETRIES or not retryable:
                 raise
 
             sleep_s = min(60.0, INSERT_RETRY_BASE_SLEEP * (2 ** (attempt - 1))) + random.random()
@@ -584,21 +636,15 @@ def insert_entity_rows(entity: str, ch, rows: List[list]):
                 f"sleep={sleep_s:.1f}s err={ex}",
                 flush=True,
             )
-
-            try:
-                ch.close()
-            except Exception:
-                pass
-
-            time.sleep(sleep_s)
-            ch = get_ch_client()
+            ch = reset_ch_client(ch, sleep_s=sleep_s)
 
     return ch
 
 
 def flush_entity_rows(entity: str, ch, row_buffer: List[list], force: bool = False):
-    while row_buffer and (force or len(row_buffer) >= INSERT_BATCH_SIZE):
-        batch_len = min(len(row_buffer), INSERT_BATCH_SIZE)
+    batch_size = get_entity_insert_batch_size(entity)
+    while row_buffer and (force or len(row_buffer) >= batch_size):
+        batch_len = min(len(row_buffer), batch_size)
         batch = row_buffer[:batch_len]
         ch = insert_entity_rows(entity, ch, batch)
         del row_buffer[:batch_len]
@@ -712,7 +758,12 @@ def main():
         raise RuntimeError("Need GH_TOKEN or GITHUB_TOKEN (Actions provides GITHUB_TOKEN automatically).")
     ch = get_ch_client()
     print(
-        f"[CONFIG] insert_batch_size={INSERT_BATCH_SIZE} "
+        f"[CONFIG] insert_batch_size_default={INSERT_BATCH_SIZE} "
+        f"insert_batch_size_events={get_entity_insert_batch_size('events')} "
+        f"insert_batch_size_markets={get_entity_insert_batch_size('markets')} "
+        f"insert_batch_size_series={get_entity_insert_batch_size('series')} "
+        f"insert_split_after_attempt={INSERT_SPLIT_AFTER_ATTEMPT} "
+        f"insert_min_split_batch_rows={INSERT_MIN_SPLIT_BATCH_ROWS} "
         f"max_partitions_per_insert_block={INSERT_MAX_PARTITIONS_PER_BLOCK} "
         f"throw_on_max_partitions_per_insert_block={1 if INSERT_THROW_ON_MAX_PARTITIONS_PER_BLOCK else 0}",
         flush=True,

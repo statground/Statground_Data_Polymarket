@@ -112,6 +112,15 @@ def fetch_refresh_window(entity: str, ch, refresh_until_iso: str):
 
 def main():
     ch = pm.get_ch_client()
+    print(
+        f"[CONFIG] insert_batch_size_default={pm.INSERT_BATCH_SIZE} "
+        f"insert_batch_size_events={pm.get_entity_insert_batch_size('events')} "
+        f"insert_batch_size_markets={pm.get_entity_insert_batch_size('markets')} "
+        f"insert_batch_size_series={pm.get_entity_insert_batch_size('series')} "
+        f"insert_split_after_attempt={pm.INSERT_SPLIT_AFTER_ATTEMPT} "
+        f"insert_min_split_batch_rows={pm.INSERT_MIN_SPLIT_BATCH_ROWS}",
+        flush=True,
+    )
     report = {
         "run_at_utc": _dt_to_iso(datetime.now(timezone.utc)),
         "lookback_hours": LOOKBACK_HOURS,
