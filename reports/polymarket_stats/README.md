@@ -10,19 +10,19 @@ It intentionally avoids internal storage/implementation details.
 
 - Total unique count: **1,372**
 - Created time range: 2022-10-13 00:34:06.557000+00:00 ~ 2026-03-27 20:01:19.039000+00:00
-- Latest reflected time range: 2026-03-29 15:40:04.360000+00:00 ~ 2026-03-29 16:05:02.915000+00:00
+- Latest reflected time range: 2026-03-29 15:40:04.360000+00:00 ~ 2026-03-29 16:45:49.655000+00:00
 
 ## Event
 
-- Total unique count: **311,328**
-- Created time range: 2022-07-27 14:40:02.074000+00:00 ~ 2026-03-29 15:52:08.855000+00:00
-- Latest reflected time range: 2026-02-17 19:39:34.045000+00:00 ~ 2026-03-29 15:57:15.213000+00:00
+- Total unique count: **311,479**
+- Created time range: 2022-07-27 14:40:02.074000+00:00 ~ 2026-03-29 16:37:02.284000+00:00
+- Latest reflected time range: 2026-02-17 19:39:34.045000+00:00 ~ 2026-03-29 16:41:40.392000+00:00
 
 ## Market
 
-- Total unique count: **752,176**
-- Created time range: 2020-10-02 16:10:01.467000+00:00 ~ 2026-03-29 15:52:08.957000+00:00
-- Latest reflected time range: 2026-02-28 10:01:20.607000+00:00 ~ 2026-03-29 16:03:37.010000+00:00
+- Total unique count: **752,294**
+- Created time range: 2020-10-02 16:10:01.467000+00:00 ~ 2026-03-29 16:37:01.993000+00:00
+- Latest reflected time range: 2026-02-28 10:01:20.607000+00:00 ~ 2026-03-29 16:44:17.624000+00:00
 
 ### Series / Created time / Yearly
 
@@ -94,15 +94,15 @@ Top buckets:
 ![](charts/series_collected_hourly.png)
 
 Top buckets:
-  - 2026-03-29 16:00: 1,265
-  - 2026-03-29 15:00: 107
+  - 2026-03-29 16:00: 1,371
+  - 2026-03-29 15:00: 1
 
 ### Event / Created time / Yearly
 
 ![](charts/event_created_yearly.png)
 
 Top buckets:
-  - 2026: 184,640
+  - 2026: 184,791
   - 2025: 116,169
   - 2024: 5,912
   - 2022: 3,171
@@ -113,14 +113,14 @@ Top buckets:
 ![](charts/event_collected_yearly.png)
 
 Top buckets:
-  - 2026: 311,328
+  - 2026: 311,479
 
 ### Event / Created time / Monthly
 
 ![](charts/event_created_monthly.png)
 
 Top buckets:
-  - 2026-03: 83,635
+  - 2026-03: 83,786
   - 2026-01: 58,354
   - 2026-02: 42,651
   - 2025-12: 40,802
@@ -131,7 +131,7 @@ Top buckets:
 ![](charts/event_collected_monthly.png)
 
 Top buckets:
-  - 2026-03: 311,327
+  - 2026-03: 311,478
   - 2026-02: 1
 
 ### Event / Created time / Daily
@@ -150,11 +150,11 @@ Top buckets:
 ![](charts/event_collected_daily.png)
 
 Top buckets:
-  - 2026-03-02: 216,009
-  - 2026-03-29: 28,388
+  - 2026-03-02: 216,007
+  - 2026-03-29: 28,544
   - 2026-03-27: 3,518
-  - 2026-03-26: 3,317
   - 2026-03-17: 3,317
+  - 2026-03-26: 3,315
 
 ### Event / Created time / Hourly
 
@@ -172,18 +172,18 @@ Top buckets:
 ![](charts/event_collected_hourly.png)
 
 Top buckets:
-  - 2026-03-02 15:00: 215,285
-  - 2026-03-29 15:00: 26,834
+  - 2026-03-02 15:00: 215,283
+  - 2026-03-29 16:00: 13,681
+  - 2026-03-29 15:00: 13,346
   - 2026-03-08 07:00: 713
   - 2026-03-07 23:00: 711
-  - 2026-03-04 23:00: 643
 
 ### Market / Created time / Yearly
 
 ![](charts/market_created_yearly.png)
 
 Top buckets:
-  - 2026: 451,223
+  - 2026: 451,341
   - 2025: 265,590
   - 2024: 22,515
   - 2022: 6,068
@@ -194,14 +194,14 @@ Top buckets:
 ![](charts/market_collected_yearly.png)
 
 Top buckets:
-  - 2026: 752,176
+  - 2026: 752,294
 
 ### Market / Created time / Monthly
 
 ![](charts/market_created_monthly.png)
 
 Top buckets:
-  - 2026-03: 195,711
+  - 2026-03: 195,829
   - 2026-01: 131,872
   - 2026-02: 123,640
   - 2025-12: 79,776
@@ -212,7 +212,7 @@ Top buckets:
 ![](charts/market_collected_monthly.png)
 
 Top buckets:
-  - 2026-03: 723,741
+  - 2026-03: 723,859
   - 2026-02: 28,435
 
 ### Market / Created time / Daily
@@ -232,10 +232,10 @@ Top buckets:
 
 Top buckets:
   - 2026-03-02: 493,407
-  - 2026-03-29: 56,719
+  - 2026-03-29: 56,859
   - 2026-02-28: 28,435
   - 2026-03-09: 9,659
-  - 2026-03-28: 9,533
+  - 2026-03-28: 9,511
 
 ### Market / Created time / Hourly
 
@@ -254,8 +254,8 @@ Top buckets:
 
 Top buckets:
   - 2026-03-02 15:00: 491,044
-  - 2026-03-29 15:00: 27,965
-  - 2026-03-29 16:00: 20,834
+  - 2026-03-29 16:00: 36,856
+  - 2026-03-29 15:00: 12,569
   - 2026-02-28 19:00: 7,402
   - 2026-02-28 10:00: 6,268
 
