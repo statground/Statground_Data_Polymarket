@@ -67,11 +67,15 @@ func FormatISO8601UTC(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
+func FormatISO8601UTCMicro(t time.Time) string {
+	return t.UTC().Truncate(time.Microsecond).Format("2006-01-02T15:04:05.000000Z")
+}
+
 func FormatDateTimeInput(t *time.Time) any {
 	if t == nil {
 		return nil
 	}
-	return t.UTC().Format(time.RFC3339Nano)
+	return FormatISO8601UTCMicro(*t)
 }
 
 func Bool01(v any) int {

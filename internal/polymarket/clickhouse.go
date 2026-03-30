@@ -247,6 +247,9 @@ func (c *ClickHouseClient) GetInsertSettings() map[string]any {
 	} else {
 		settings["throw_on_max_partitions_per_insert_block"] = 0
 	}
+	if strings.TrimSpace(c.cfg.CHDateTimeInputFormat) != "" {
+		settings["date_time_input_format"] = c.cfg.CHDateTimeInputFormat
+	}
 	return settings
 }
 

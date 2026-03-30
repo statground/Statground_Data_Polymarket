@@ -62,7 +62,7 @@ func BuildEntityRow(ctx context.Context, ch *ClickHouseClient, entity string, ob
 
 type timeWrapper struct{ value string }
 
-func wrapTime(t time.Time) timeWrapper { return timeWrapper{value: FormatISO8601UTC(t)} }
+func wrapTime(t time.Time) timeWrapper { return timeWrapper{value: FormatISO8601UTCMicro(t)} }
 
 func buildEventRow(obj map[string]any, collectedAt timeWrapper, rawKey string) map[string]any {
 	eventID := firstUint64(obj["id"], obj["eventId"], obj["event_id"])
@@ -183,7 +183,7 @@ func formatAnyTime(v any) any {
 
 func formatTimeString(s string) any {
 	if t := ParseISOUTC(s); t != nil {
-		return FormatISO8601UTC(*t)
+		return FormatISO8601UTCMicro(*t)
 	}
 	return nil
 }

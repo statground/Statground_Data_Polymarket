@@ -40,13 +40,14 @@ type Config struct {
 	GHToken          string
 	CheckpointPath   string
 
-	CHHost      string
-	CHPort      int
-	CHUser      string
-	CHPassword  string
-	CHDatabase  string
-	CHInterface string
-	CHScheme    string
+	CHHost                string
+	CHPort                int
+	CHUser                string
+	CHPassword            string
+	CHDatabase            string
+	CHInterface           string
+	CHScheme              string
+	CHDateTimeInputFormat string
 
 	EventTable  string
 	MarketTable string
@@ -105,13 +106,14 @@ func LoadConfig() (*Config, error) {
 		GHToken:          firstNonEmpty(os.Getenv("GH_TOKEN"), os.Getenv("GITHUB_TOKEN")),
 		CheckpointPath:   envString("CHECKPOINT_PATH", ".state/polymarket_checkpoint.json"),
 
-		CHHost:      os.Getenv("CLICKHOUSE_HOST"),
-		CHPort:      envInt("CLICKHOUSE_PORT", 8123),
-		CHUser:      envString("CLICKHOUSE_USER", "default"),
-		CHPassword:  os.Getenv("CLICKHOUSE_PASSWORD"),
-		CHDatabase:  envString("CLICKHOUSE_DATABASE", "statground_polymarket"),
-		CHInterface: strings.ToLower(envString("CLICKHOUSE_INTERFACE", "http")),
-		CHScheme:    strings.ToLower(envString("CLICKHOUSE_SCHEME", "http")),
+		CHHost:                os.Getenv("CLICKHOUSE_HOST"),
+		CHPort:                envInt("CLICKHOUSE_PORT", 8123),
+		CHUser:                envString("CLICKHOUSE_USER", "default"),
+		CHPassword:            os.Getenv("CLICKHOUSE_PASSWORD"),
+		CHDatabase:            envString("CLICKHOUSE_DATABASE", "statground_polymarket"),
+		CHInterface:           strings.ToLower(envString("CLICKHOUSE_INTERFACE", "http")),
+		CHScheme:              strings.ToLower(envString("CLICKHOUSE_SCHEME", "http")),
+		CHDateTimeInputFormat: envString("CLICKHOUSE_DATE_TIME_INPUT_FORMAT", envString("CH_DATE_TIME_INPUT_FORMAT", "best_effort")),
 
 		EventTable:  envString("EVENT_TABLE", "polymarket_event"),
 		MarketTable: envString("MARKET_TABLE", "polymarket_market"),
