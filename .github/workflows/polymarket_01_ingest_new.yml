@@ -3,7 +3,7 @@ name: Polymarket - Ingest NEW series/events/markets (UTC)
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 * * * *'  # every hour at :00 (UTC)
+    - cron: '0 * * * *'
 
 concurrency:
   group: polymarket-pipeline-${{ github.ref }}
@@ -18,8 +18,8 @@ jobs:
 
     env:
       GH_TOKEN: ${{ secrets.POLYMARKET_PAT }}
+      GITHUB_TOKEN: ${{ github.token }}
       POLY_BASE: https://gamma-api.polymarket.com
-      PYTHONUNBUFFERED: "1"
 
       INSERT_BATCH_SIZE: ${{ vars.POLYMARKET_INSERT_BATCH_SIZE || '1000' }}
       INSERT_BATCH_SIZE_SERIES: ${{ vars.POLYMARKET_INSERT_BATCH_SIZE_SERIES || '200' }}
@@ -38,10 +38,11 @@ jobs:
       CLICKHOUSE_USER: ${{ secrets.CLICKHOUSE_USER }}
       CLICKHOUSE_PASSWORD: ${{ secrets.CLICKHOUSE_PASSWORD }}
       CLICKHOUSE_DATABASE: ${{ secrets.CLICKHOUSE_DATABASE }}
-      CLICKHOUSE_INTERFACE: ${{ secrets.CLICKHOUSE_INTERFACE }}
-      OPTIMIZE_AFTER_RUN: "1"
-      OPTIMIZE_PROB: "0.15"
-      OPTIMIZE_MAX_PARTITIONS: "4"
+      CLICKHOUSE_INTERFACE: http
+      CLICKHOUSE_SCHEME: ${{ secrets.CLICKHOUSE_SCHEME || 'http' }}
+      OPTIMIZE_AFTER_RUN: '1'
+      OPTIMIZE_PROB: '0.15'
+      OPTIMIZE_MAX_PARTITIONS: '4'
 
     steps:
       - name: Checkout
@@ -50,26 +51,16 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Install system fonts (Korean)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fonts-noto-cjk
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Go
+        uses: actions/setup-go@v6
         with:
-          python-version: "3.11"
+          go-version-file: go.mod
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+      - name: Verify build
+        run: go build ./...
 
       - name: Ingest new objects
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          python -m scripts.polymarket_crawl_to_clickhouse
+        run: go run ./cmd/polymarket-ingest
 
       - name: Sync latest repository state
         run: |
@@ -78,6 +69,5 @@ jobs:
 
       - name: Generate + push stats report safely
         env:
-          STATS_COMMIT_MESSAGE: "chore(stats): update polymarket stats after ingest (UTC)"
-        run: |
-          python -m scripts.polymarket_sync_and_push_stats
+          STATS_COMMIT_MESSAGE: 'chore(stats): update polymarket stats after ingest (UTC)'
+        run: go run ./cmd/polymarket-sync-push
