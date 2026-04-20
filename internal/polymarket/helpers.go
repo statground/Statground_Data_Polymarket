@@ -367,6 +367,27 @@ func RetryBackoff(base time.Duration, attempt int) time.Duration {
 	return time.Duration(seconds * float64(time.Second))
 }
 
+func cloneAnyMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return map[string]any{}
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func isParallelParsingLargeRowError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "size of json object") &&
+		strings.Contains(msg, "min_chunk_bytes_for_parallel_parsing") &&
+		strings.Contains(msg, "parallelparsingblockinputformat")
+}
+
 func IsRetryableInsertError(err error) bool {
 	if err == nil {
 		return false

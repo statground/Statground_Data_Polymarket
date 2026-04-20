@@ -1,7 +1,6 @@
 package polymarket
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -188,20 +187,56 @@ func (c *ClickHouseClient) PrepareRawJSONValue(ctx context.Context, entity strin
 	return string(b), true, nil
 }
 
+const autoDisableParallelParsingRowBytes = 1 << 20
+
+func encodeJSONEachRowBody(rows []map[string]any) ([]byte, int, error) {
+	buf := &bytes.Buffer{}
+	maxRowBytes := 0
+	for _, row := range rows {
+		lineBuf := &bytes.Buffer{}
+		enc := json.NewEncoder(lineBuf)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(row); err != nil {
+			return nil, 0, err
+		}
+		if lineBuf.Len() > maxRowBytes {
+			maxRowBytes = lineBuf.Len()
+		}
+		if _, err := buf.Write(lineBuf.Bytes()); err != nil {
+			return nil, 0, err
+		}
+	}
+	return buf.Bytes(), maxRowBytes, nil
+}
+
 func (c *ClickHouseClient) InsertJSONEachRow(ctx context.Context, table string, columns []string, rows []map[string]any, settings map[string]any) error {
 	if len(rows) == 0 {
 		return nil
 	}
+
+	bodyBytes, maxRowBytes, err := encodeJSONEachRowBody(rows)
+	if err != nil {
+		return err
+	}
+
+	effectiveSettings := cloneAnyMap(settings)
+	if maxRowBytes >= autoDisableParallelParsingRowBytes {
+		if _, exists := effectiveSettings["input_format_parallel_parsing"]; !exists {
+			effectiveSettings["input_format_parallel_parsing"] = 0
+			fmt.Printf("[INSERT SETTINGS] table=%s rows=%d max_row_bytes=%d -> input_format_parallel_parsing=0\n", table, len(rows), maxRowBytes)
+		}
+	}
+
 	var sb strings.Builder
 	sb.WriteString("INSERT INTO ")
 	sb.WriteString(c.qualifiedTable(table))
 	sb.WriteString(" (")
 	sb.WriteString(strings.Join(columns, ", "))
 	sb.WriteString(")")
-	if len(settings) > 0 {
+	if len(effectiveSettings) > 0 {
 		first := true
 		sb.WriteString(" SETTINGS ")
-		for key, value := range settings {
+		for key, value := range effectiveSettings {
 			if !first {
 				sb.WriteString(", ")
 			}
@@ -220,20 +255,7 @@ func (c *ClickHouseClient) InsertJSONEachRow(ctx context.Context, table string, 
 	}
 	sb.WriteString(" FORMAT JSONEachRow")
 
-	buf := &bytes.Buffer{}
-	writer := bufio.NewWriter(buf)
-	enc := json.NewEncoder(writer)
-	enc.SetEscapeHTML(false)
-	for _, row := range rows {
-		if err := enc.Encode(row); err != nil {
-			return err
-		}
-	}
-	if err := writer.Flush(); err != nil {
-		return err
-	}
-
-	_, err := c.doRequest(ctx, sb.String(), bytes.NewReader(buf.Bytes()))
+	_, err = c.doRequest(ctx, sb.String(), bytes.NewReader(bodyBytes))
 	return err
 }
 
@@ -279,6 +301,15 @@ func (c *ClickHouseClient) InsertEntityRows(ctx context.Context, entity string, 
 		err = current.InsertJSONEachRow(ctx, table, columns, rows, settings)
 		if err == nil {
 			return current, nil
+		}
+		if isParallelParsingLargeRowError(err) {
+			fallbackSettings := cloneAnyMap(settings)
+			fallbackSettings["input_format_parallel_parsing"] = 0
+			fmt.Printf("[INSERT FALLBACK] entity=%s rows=%d attempt=%d/%d -> input_format_parallel_parsing=0 err=%v\n", entity, len(rows), attempt, c.cfg.InsertMaxRetries, err)
+			err = current.InsertJSONEachRow(ctx, table, columns, rows, fallbackSettings)
+			if err == nil {
+				return current, nil
+			}
 		}
 		retryable := IsRetryableInsertError(err)
 		shouldSplit := retryable && len(rows) >= c.cfg.InsertMinSplitBatchRows && attempt >= c.cfg.InsertSplitAfterAttempt
