@@ -100,15 +100,18 @@ func RunRefresh() error {
 		return err
 	}
 
-	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s lookback_hours=%d batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d\n",
+	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s entities=%s lookback_hours=%d batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d kafka_batch_bytes=%d kafka_max_message_bytes=%d\n",
 		cfg.IngestMode,
 		cfg.KafkaTopic,
+		joinCSV(cfg.Entities),
 		cfg.LookbackHours,
 		cfg.InsertBatchSize,
 		cfg.InsertBatchSizeForEntity("events"),
 		cfg.InsertBatchSizeForEntity("markets"),
 		cfg.InsertBatchSizeForEntity("series"),
 		cfg.KafkaBatchSize,
+		cfg.KafkaBatchBytes,
+		cfg.KafkaMaxMessageBytes,
 	)
 
 	ctx := context.Background()
@@ -124,7 +127,7 @@ func RunRefresh() error {
 	refreshUntil := UTCNow().Add(-time.Duration(cfg.LookbackHours) * time.Hour)
 	refreshUntilISO := FormatISO8601UTC(refreshUntil)
 	wroteTotal := 0
-	for _, entity := range []string{"events", "markets", "series"} {
+	for _, entity := range cfg.Entities {
 		fmt.Printf("[REFRESH] %s: refresh_until=%s\n", entity, refreshUntilISO)
 		wrote, err := fetchRefreshWindow(ctx, ingestor, entity, refreshUntilISO)
 		if err != nil {

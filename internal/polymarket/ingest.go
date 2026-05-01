@@ -138,14 +138,17 @@ func RunIngest() error {
 		return err
 	}
 
-	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d\n",
+	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s entities=%s batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d kafka_batch_bytes=%d kafka_max_message_bytes=%d\n",
 		cfg.IngestMode,
 		cfg.KafkaTopic,
+		joinCSV(cfg.Entities),
 		cfg.InsertBatchSize,
 		cfg.InsertBatchSizeForEntity("events"),
 		cfg.InsertBatchSizeForEntity("markets"),
 		cfg.InsertBatchSizeForEntity("series"),
 		cfg.KafkaBatchSize,
+		cfg.KafkaBatchBytes,
+		cfg.KafkaMaxMessageBytes,
 	)
 
 	ctx := context.Background()
@@ -162,7 +165,7 @@ func RunIngest() error {
 	}
 
 	wroteTotal := 0
-	for _, entity := range []string{"events", "markets", "series"} {
+	for _, entity := range cfg.Entities {
 		res, err := ingestor.FetchAndPublish(ctx, entity, checkpoint)
 		if err != nil {
 			return err
@@ -170,6 +173,13 @@ func RunIngest() error {
 		wroteTotal += res.TotalWritten
 		if res.NewCheckpoint != "" {
 			newCheckpoint[entity] = res.NewCheckpoint
+			if err := ingestor.state.SaveCheckpoint(ctx, newCheckpoint); err != nil {
+				return err
+			}
+			if err := ingestor.PublishCheckpoint(ctx, newCheckpoint); err != nil {
+				return err
+			}
+			checkpoint = CopyMapStringString(newCheckpoint)
 		}
 	}
 

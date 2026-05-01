@@ -13,6 +13,7 @@ type Config struct {
 	PolyBase       string
 	PageLimit      int
 	MaxPages       int
+	Entities       []string
 	OrderPrimary   string
 	OrderFallback  string
 	RequestTimeout time.Duration
@@ -25,16 +26,19 @@ type Config struct {
 	InsertBatchSizeMarkets int
 	InsertBatchSizeSeries  int
 
-	IngestMode        string
-	KafkaBrokers      []string
-	KafkaUsername     string
-	KafkaPassword     string
-	KafkaTopic        string
-	KafkaClientID     string
-	KafkaBatchSize    int
-	KafkaBatchTimeout time.Duration
-	ProducerSource    string
-	ProducerIP        string
+	IngestMode           string
+	KafkaBrokers         []string
+	KafkaUsername        string
+	KafkaPassword        string
+	KafkaTopic           string
+	KafkaClientID        string
+	KafkaBatchSize       int
+	KafkaBatchBytes      int
+	KafkaBatchTimeout    time.Duration
+	KafkaWriteChunkSize  int
+	KafkaMaxMessageBytes int
+	ProducerSource       string
+	ProducerIP           string
 
 	Org              string
 	OrchestratorRepo string
@@ -59,6 +63,7 @@ func LoadConfig() (*Config, error) {
 		PolyBase:       strings.TrimRight(envString("POLY_BASE", "https://gamma-api.polymarket.com"), "/"),
 		PageLimit:      maxInt(1, envInt("PAGE_LIMIT", 100)),
 		MaxPages:       maxInt(1, envInt("MAX_PAGES", 200)),
+		Entities:       normalizePolymarketEntities(splitCSV(envString("ENTITIES", "events,markets,series"))),
 		OrderPrimary:   envString("ORDER_PRIMARY", "updatedAt"),
 		OrderFallback:  envString("ORDER_FALLBACK", "id"),
 		RequestTimeout: time.Duration(maxInt(1, envInt("REQUEST_TIMEOUT", 30))) * time.Second,
@@ -69,18 +74,21 @@ func LoadConfig() (*Config, error) {
 		InsertBatchSize:        maxInt(1, batchSize),
 		InsertBatchSizeEvents:  maxInt(1, envInt("BATCH_SIZE_EVENTS", envInt("INSERT_BATCH_SIZE_EVENTS", batchSize))),
 		InsertBatchSizeMarkets: maxInt(1, envInt("BATCH_SIZE_MARKETS", envInt("INSERT_BATCH_SIZE_MARKETS", batchSize))),
-		InsertBatchSizeSeries:  maxInt(1, envInt("BATCH_SIZE_SERIES", envInt("INSERT_BATCH_SIZE_SERIES", minInt(batchSize, 200)))),
+		InsertBatchSizeSeries:  maxInt(1, envInt("BATCH_SIZE_SERIES", envInt("INSERT_BATCH_SIZE_SERIES", minInt(batchSize, 50)))),
 
-		IngestMode:        strings.ToLower(envString("INGEST_MODE", "kafka")),
-		KafkaBrokers:      splitCSV(envString("KAFKA_BROKERS", "")),
-		KafkaUsername:     firstNonEmpty(os.Getenv("KAFKA_USERNAME"), os.Getenv("KAFKA_EXTERNAL_USER")),
-		KafkaPassword:     firstNonEmpty(os.Getenv("KAFKA_PASSWORD"), os.Getenv("KAFKA_EXTERNAL_PASSWORD")),
-		KafkaTopic:        envString("KAFKA_TOPIC", "prediction.events"),
-		KafkaClientID:     envString("KAFKA_CLIENT_ID", "statground-polymarket-crawler"),
-		KafkaBatchSize:    maxInt(1, envInt("KAFKA_BATCH_SIZE", 100)),
-		KafkaBatchTimeout: envFloatDuration("KAFKA_BATCH_TIMEOUT", 1.0),
-		ProducerSource:    envString("PRODUCER_SOURCE", "github_actions"),
-		ProducerIP:        envString("PRODUCER_IP", "::"),
+		IngestMode:           strings.ToLower(envString("INGEST_MODE", "kafka")),
+		KafkaBrokers:         splitCSV(envString("KAFKA_BROKERS", "")),
+		KafkaUsername:        firstNonEmpty(os.Getenv("KAFKA_USERNAME"), os.Getenv("KAFKA_EXTERNAL_USER")),
+		KafkaPassword:        firstNonEmpty(os.Getenv("KAFKA_PASSWORD"), os.Getenv("KAFKA_EXTERNAL_PASSWORD")),
+		KafkaTopic:           envString("KAFKA_TOPIC", "prediction.events"),
+		KafkaClientID:        envString("KAFKA_CLIENT_ID", "statground-polymarket-crawler"),
+		KafkaBatchSize:       maxInt(1, envInt("KAFKA_BATCH_SIZE", 10)),
+		KafkaBatchBytes:      maxInt(65536, envInt("KAFKA_BATCH_BYTES", 524288)),
+		KafkaBatchTimeout:    envFloatDuration("KAFKA_BATCH_TIMEOUT", 1.0),
+		KafkaWriteChunkSize:  maxInt(1, envInt("KAFKA_WRITE_CHUNK_SIZE", envInt("KAFKA_BATCH_SIZE", 10))),
+		KafkaMaxMessageBytes: maxInt(262144, envInt("KAFKA_MAX_MESSAGE_BYTES", 900000)),
+		ProducerSource:       envString("PRODUCER_SOURCE", "github_actions"),
+		ProducerIP:           envString("PRODUCER_IP", "::"),
 
 		Org:              envString("ORG", "statground"),
 		OrchestratorRepo: envString("ORCHESTRATOR_REPO", "Statground_Data_Polymarket"),
@@ -106,8 +114,39 @@ func LoadConfig() (*Config, error) {
 	if strings.TrimSpace(cfg.KafkaTopic) == "" {
 		return nil, fmt.Errorf("missing required env: KAFKA_TOPIC")
 	}
+	if len(cfg.Entities) == 0 {
+		return nil, fmt.Errorf("ENTITIES must contain at least one of: events, markets, series")
+	}
 
 	return cfg, nil
+}
+
+func normalizePolymarketEntities(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, 3)
+	for _, raw := range values {
+		entity := strings.ToLower(strings.TrimSpace(raw))
+		switch entity {
+		case "event":
+			entity = "events"
+		case "market":
+			entity = "markets"
+		case "serie":
+			entity = "series"
+		}
+		switch entity {
+		case "events", "markets", "series":
+			if !seen[entity] {
+				seen[entity] = true
+				out = append(out, entity)
+			}
+		}
+	}
+	return out
+}
+
+func joinCSV(values []string) string {
+	return strings.Join(values, ",")
 }
 
 func (c *Config) Endpoint(entity string) string {

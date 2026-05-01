@@ -1,7 +1,16 @@
 name: Polymarket - Refresh recent history to Kafka
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      entities:
+        description: "Comma-separated entity list."
+        required: false
+        default: "events,markets,series"
+      max_pages:
+        description: "Optional MAX_PAGES override for this run."
+        required: false
+        default: ""
   schedule:
     - cron: "20 */6 * * *"
 
@@ -27,10 +36,15 @@ jobs:
       KAFKA_CLIENT_ID: statground-polymarket-refresh-history
       PRODUCER_SOURCE: github_actions
       PRODUCER_IP: "::"
+      ENTITIES: ${{ github.event.inputs.entities || vars.POLYMARKET_ENTITIES || 'events,markets,series' }}
+      MAX_PAGES: ${{ github.event.inputs.max_pages || vars.POLYMARKET_MAX_PAGES || '200' }}
       LOOKBACK_HOURS: ${{ vars.POLYMARKET_LOOKBACK_HOURS || '72' }}
       BATCH_SIZE: ${{ vars.POLYMARKET_BATCH_SIZE || vars.POLYMARKET_INSERT_BATCH_SIZE || '1000' }}
-      BATCH_SIZE_SERIES: ${{ vars.POLYMARKET_BATCH_SIZE_SERIES || vars.POLYMARKET_INSERT_BATCH_SIZE_SERIES || '200' }}
-      KAFKA_BATCH_SIZE: ${{ vars.POLYMARKET_KAFKA_BATCH_SIZE || '100' }}
+      BATCH_SIZE_SERIES: ${{ vars.POLYMARKET_BATCH_SIZE_SERIES || vars.POLYMARKET_INSERT_BATCH_SIZE_SERIES || '50' }}
+      KAFKA_BATCH_SIZE: ${{ vars.POLYMARKET_KAFKA_BATCH_SIZE || '10' }}
+      KAFKA_WRITE_CHUNK_SIZE: ${{ vars.POLYMARKET_KAFKA_WRITE_CHUNK_SIZE || '10' }}
+      KAFKA_BATCH_BYTES: ${{ vars.POLYMARKET_KAFKA_BATCH_BYTES || '524288' }}
+      KAFKA_MAX_MESSAGE_BYTES: ${{ vars.POLYMARKET_KAFKA_MAX_MESSAGE_BYTES || '900000' }}
       KAFKA_BATCH_TIMEOUT: ${{ vars.POLYMARKET_KAFKA_BATCH_TIMEOUT || '1.0' }}
       REQUEST_TIMEOUT: ${{ vars.POLYMARKET_REQUEST_TIMEOUT || '30' }}
       CONNECT_TIMEOUT: ${{ vars.POLYMARKET_CONNECT_TIMEOUT || '10' }}

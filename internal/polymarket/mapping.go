@@ -49,7 +49,7 @@ func BuildEntityRow(entity string, obj map[string]any, collectedAt timeWrapper, 
 	if row == nil {
 		return nil, nil
 	}
-	row["raw_json"] = StringifyJSON(obj)
+	row["raw_json"] = RawJSONForEntity(entity, obj)
 	return row, nil
 }
 
@@ -222,6 +222,43 @@ func firstIDSlice(slices ...[]uint64) []uint64 {
 		}
 	}
 	return []uint64{}
+}
+
+func RawJSONForEntity(entity string, obj map[string]any) string {
+	return StringifyJSON(PruneNestedPolymarketEntities(entity, obj))
+}
+
+func PruneNestedPolymarketEntities(entity string, obj map[string]any) map[string]any {
+	out := make(map[string]any, len(obj)+8)
+	for k, v := range obj {
+		out[k] = v
+	}
+
+	refKeys := map[string]string{
+		"events":  "_statground_nested_event_ids",
+		"markets": "_statground_nested_market_ids",
+		"series":  "_statground_nested_series_ids",
+	}
+	prunedKeys := make([]string, 0, 3)
+	for _, key := range []string{"events", "markets", "series"} {
+		value, ok := out[key]
+		if !ok {
+			continue
+		}
+		ids := ExtractIDs(value, "id")
+		if len(ids) > 0 {
+			out[refKeys[key]] = ids
+		}
+		delete(out, key)
+		prunedKeys = append(prunedKeys, key)
+	}
+
+	if len(prunedKeys) > 0 {
+		out["_statground_raw_json_policy"] = "nested_polymarket_entity_arrays_pruned_for_kafka_message_size"
+		out["_statground_raw_json_entity"] = entity
+		out["_statground_raw_json_pruned_keys"] = prunedKeys
+	}
+	return out
 }
 
 func NormalizeRawJSON(obj map[string]any) map[string]any {

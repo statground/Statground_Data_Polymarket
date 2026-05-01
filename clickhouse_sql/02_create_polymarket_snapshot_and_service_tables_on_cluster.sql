@@ -33,7 +33,7 @@ ON CLUSTER statground_cluster
     icon_url String COMMENT 'Polymarket event.icon URL',
     image_url String COMMENT 'Polymarket event.image URL',
     volume Nullable(Float64) COMMENT 'Polymarket event.volume; Nullable metric',
-    raw_json String COMMENT 'Polymarket API raw JSON string; OLAP raw retention only; SSOT 아님',
+    raw_json String COMMENT 'Polymarket API raw JSON string after producer-side pruning of large nested entity arrays; OLAP raw retention only; SSOT 아님',
     ingested_at DateTime64(3, 'Asia/Seoul') DEFAULT now64(3, 'Asia/Seoul') COMMENT 'ClickHouse ingestion timestamp in Asia/Seoul'
 )
 ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Raw/polymarket_event_snapshot_local', '{replica}')
@@ -83,7 +83,7 @@ ON CLUSTER statground_cluster
     series_slug LowCardinality(String) COMMENT 'Polymarket market.seriesSlug; LowCardinality for grouping/filtering',
     series_ids Array(UInt64) COMMENT 'Connected Polymarket series ids extracted from payload',
     event_ids Array(UInt64) COMMENT 'Connected Polymarket event ids extracted from payload',
-    raw_json String COMMENT 'Polymarket API raw JSON string; OLAP raw retention only; SSOT 아님',
+    raw_json String COMMENT 'Polymarket API raw JSON string after producer-side pruning of large nested entity arrays; OLAP raw retention only; SSOT 아님',
     ingested_at DateTime64(3, 'Asia/Seoul') DEFAULT now64(3, 'Asia/Seoul') COMMENT 'ClickHouse ingestion timestamp in Asia/Seoul'
 )
 ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Raw/polymarket_market_snapshot_local', '{replica}')
@@ -118,7 +118,7 @@ ON CLUSTER statground_cluster
     volume Nullable(Float64) COMMENT 'Polymarket series.volume; Nullable metric',
     volume_24h Nullable(Float64) COMMENT 'Polymarket series.volume24hr or volume24h; Nullable metric',
     event_ids Array(UInt64) COMMENT 'Connected Polymarket event ids extracted from payload',
-    raw_json String COMMENT 'Polymarket API raw JSON string; OLAP raw retention only; SSOT 아님',
+    raw_json String COMMENT 'Polymarket API raw JSON string after producer-side pruning of large nested entity arrays; OLAP raw retention only; SSOT 아님',
     ingested_at DateTime64(3, 'Asia/Seoul') DEFAULT now64(3, 'Asia/Seoul') COMMENT 'ClickHouse ingestion timestamp in Asia/Seoul'
 )
 ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Raw/polymarket_series_snapshot_local', '{replica}')

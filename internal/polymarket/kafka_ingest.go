@@ -122,6 +122,7 @@ func (i *Ingestor) kafkaWriter() *kafka.Writer {
 		RequiredAcks:           kafka.RequireAll,
 		AllowAutoTopicCreation: false,
 		BatchSize:              i.cfg.KafkaBatchSize,
+		BatchBytes:             int64(i.cfg.KafkaBatchBytes),
 		BatchTimeout:           i.cfg.KafkaBatchTimeout,
 	}
 	if strings.TrimSpace(i.cfg.KafkaClientID) != "" || strings.TrimSpace(i.cfg.KafkaUsername) != "" {
@@ -141,7 +142,8 @@ func (i *Ingestor) publishKafkaEvents(ctx context.Context, events []predictionKa
 	w := i.kafkaWriter()
 	defer w.Close()
 
-	messages := make([]kafka.Message, 0, len(events))
+	chunkSize := maxInt(1, i.cfg.KafkaWriteChunkSize)
+	messages := make([]kafka.Message, 0, minInt(chunkSize, len(events)))
 	for _, ev := range events {
 		body, err := json.Marshal(ev)
 		if err != nil {
@@ -152,8 +154,81 @@ func (i *Ingestor) publishKafkaEvents(ctx context.Context, events []predictionKa
 			Value: body,
 			Time:  UTCNow(),
 		})
+		if len(messages) >= chunkSize {
+			if err := writeKafkaMessagesBounded(ctx, w, messages); err != nil {
+				return err
+			}
+			messages = messages[:0]
+		}
 	}
-	return w.WriteMessages(ctx, messages...)
+	return writeKafkaMessagesBounded(ctx, w, messages)
+}
+
+func writeKafkaMessagesBounded(ctx context.Context, w *kafka.Writer, messages []kafka.Message) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	err := w.WriteMessages(ctx, messages...)
+	if err == nil {
+		return nil
+	}
+	if len(messages) > 1 && isKafkaMessageSizeTooLarge(err) {
+		mid := len(messages) / 2
+		if err := writeKafkaMessagesBounded(ctx, w, messages[:mid]); err != nil {
+			return err
+		}
+		return writeKafkaMessagesBounded(ctx, w, messages[mid:])
+	}
+	if len(messages) == 1 && isKafkaMessageSizeTooLarge(err) {
+		return fmt.Errorf("kafka message too large after shrink key=%s value_bytes=%d: %w", string(messages[0].Key), len(messages[0].Value), err)
+	}
+	return err
+}
+
+func isKafkaMessageSizeTooLarge(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "message size too large") || strings.Contains(msg, "record too large")
+}
+
+func (i *Ingestor) PublishCheckpoint(ctx context.Context, checkpoint map[string]string) error {
+	if len(checkpoint) == 0 {
+		return nil
+	}
+	now := UTCNow()
+	checkpointUUID, err := UUIDv7()
+	if err != nil {
+		return err
+	}
+	payload := map[string]any{
+		"checkpoint_uuid": checkpointUUID,
+		"service":         "polymarket",
+		"source":          i.cfg.ProducerSource,
+		"checkpoint":      checkpoint,
+		"updated_at":      FormatISO8601UTCMicro(now),
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	ev := predictionKafkaEvent{
+		EventUUID: checkpointUUID,
+		Source:    i.cfg.ProducerSource,
+		Host:      i.kafkaHost(),
+		UUIDUser:  "",
+		IP:        i.cfg.ProducerIP,
+		URL:       strings.TrimRight(i.cfg.PolyBase, "/") + "/checkpoint",
+		EventType: "polymarket.crawl_checkpoint.v1",
+		Payload:   string(payloadJSON),
+		CreatedAt: FormatISO8601UTCMicro(now),
+	}
+	ev, err = i.ensureKafkaEventSize("checkpoint", ev)
+	if err != nil {
+		return err
+	}
+	return i.publishKafkaEvents(ctx, []predictionKafkaEvent{ev})
 }
 
 func kafkaEventKey(ev predictionKafkaEvent) string {
@@ -177,7 +252,7 @@ func (i *Ingestor) rowEvent(entity string, row map[string]any) (predictionKafkaE
 		}
 	}
 	createdAt := firstNonEmpty(SafeString(row["collected_at_utc"]), FormatISO8601UTCMicro(UTCNow()))
-	return predictionKafkaEvent{
+	ev := predictionKafkaEvent{
 		EventUUID: eventUUID,
 		Source:    i.cfg.ProducerSource,
 		Host:      i.kafkaHost(),
@@ -187,7 +262,87 @@ func (i *Ingestor) rowEvent(entity string, row map[string]any) (predictionKafkaE
 		EventType: polymarketEventType(entity),
 		Payload:   string(payloadJSON),
 		CreatedAt: createdAt,
-	}, nil
+	}
+	return i.ensureKafkaEventSize(entity, ev)
+}
+
+func (i *Ingestor) ensureKafkaEventSize(entity string, ev predictionKafkaEvent) (predictionKafkaEvent, error) {
+	maxBytes := i.cfg.KafkaMaxMessageBytes
+	if maxBytes <= 0 {
+		return ev, nil
+	}
+	before := kafkaEventWireBytes(ev)
+	if before <= maxBytes {
+		return ev, nil
+	}
+
+	payload := map[string]any{}
+	if err := json.Unmarshal([]byte(ev.Payload), &payload); err != nil {
+		return predictionKafkaEvent{}, err
+	}
+
+	payload = shrinkKafkaPayload(payload, "raw_json_omitted_because_kafka_message_exceeded_configured_limit")
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return predictionKafkaEvent{}, err
+	}
+	ev.Payload = string(payloadJSON)
+	after := kafkaEventWireBytes(ev)
+
+	if after > maxBytes {
+		payload = hardTrimKafkaPayload(payload)
+		payloadJSON, err = json.Marshal(payload)
+		if err != nil {
+			return predictionKafkaEvent{}, err
+		}
+		ev.Payload = string(payloadJSON)
+		after = kafkaEventWireBytes(ev)
+	}
+
+	if after > maxBytes {
+		return predictionKafkaEvent{}, fmt.Errorf("kafka event remains too large entity=%s key=%s bytes_before=%d bytes_after=%d max_bytes=%d", entity, kafkaEventKey(ev), before, after, maxBytes)
+	}
+
+	fmt.Printf("[kafka] oversized payload shrunk entity=%s key=%s bytes_before=%d bytes_after=%d max_bytes=%d\n",
+		entity, kafkaEventKey(ev), before, after, maxBytes)
+	return ev, nil
+}
+
+func kafkaEventWireBytes(ev predictionKafkaEvent) int {
+	body, err := json.Marshal(ev)
+	if err != nil {
+		return 0
+	}
+	return len(body)
+}
+
+func shrinkKafkaPayload(payload map[string]any, policy string) map[string]any {
+	out := make(map[string]any, len(payload)+4)
+	for k, v := range payload {
+		out[k] = v
+	}
+	raw := SafeString(out["raw_json"])
+	if raw != "" {
+		out["raw_json_original_bytes"] = len([]byte(raw))
+	}
+	out["raw_json"] = "{}"
+	out["raw_json_policy"] = policy
+	return out
+}
+
+func hardTrimKafkaPayload(payload map[string]any) map[string]any {
+	out := make(map[string]any, len(payload)+4)
+	for k, v := range payload {
+		out[k] = v
+	}
+	for _, key := range []string{"description", "question", "title"} {
+		if s := SafeString(out[key]); len([]byte(s)) > 8192 {
+			out[key] = TrimBody(s, 8192)
+			out[key+"_truncated"] = true
+		}
+	}
+	out["payload_policy"] = "large_text_fields_trimmed_after_raw_json_omission"
+	return out
 }
 
 func cloneRowForKafka(entity string, row map[string]any) map[string]any {
