@@ -12,9 +12,9 @@ Cluster: statground_cluster
 SET distributed_ddl_task_timeout = 180;
 SET distributed_ddl_output_mode = 'none_only_active';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Raw`.mv_polymarket_kafka_queue_to_events
+CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.mv_polymarket_kafka_queue_to_events
 ON CLUSTER statground_cluster
-TO `Data_Prediction_Raw`.polymarket_events_local
+TO `Data_Prediction_Polymarket_Raw`.polymarket_events_local
 AS
 SELECT
     ifNull(toUUIDOrNull(event_uuid), toUUID('00000000-0000-0000-0000-000000000000')) AS event_uuid,
@@ -32,17 +32,17 @@ SELECT
     payload AS payload,
     coalesce(parseDateTime64BestEffortOrNull(created_at, 3, 'Asia/Seoul'), now64(3, 'Asia/Seoul')) AS created_at,
     now64(3, 'Asia/Seoul') AS ingested_at
-FROM `Data_Prediction_Raw`.polymarket_events_kafka_queue
+FROM `Data_Prediction_Polymarket_Raw`.polymarket_events_kafka_queue
 WHERE length(ifNull(_error, '')) = 0
   AND startsWith(event_type, 'polymarket.');
 
-ALTER TABLE `Data_Prediction_Raw`.mv_polymarket_kafka_queue_to_events
+ALTER TABLE `Data_Prediction_Polymarket_Raw`.mv_polymarket_kafka_queue_to_events
 ON CLUSTER statground_cluster
-MODIFY COMMENT 'Materialized view from Polymarket Kafka Engine queue to Data_Prediction_Raw.polymarket_events_local; valid Polymarket rows only; one local insert per ClickHouse Kafka consumer';
+MODIFY COMMENT 'Materialized view from Polymarket Kafka Engine queue to Data_Prediction_Polymarket_Raw.polymarket_events_local; valid Polymarket rows only; one local insert per ClickHouse Kafka consumer';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Log`.mv_polymarket_kafka_queue_to_parse_error_local
+CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Polymarket_Log`.mv_polymarket_kafka_queue_to_parse_error_local
 ON CLUSTER statground_cluster
-TO `Data_Prediction_Log`.polymarket_kafka_parse_error_local
+TO `Data_Prediction_Polymarket_Log`.polymarket_kafka_parse_error_local
 AS
 SELECT
     ifNull(toUUIDOrNull(event_uuid), toUUID('00000000-0000-0000-0000-000000000000')) AS event_uuid,
@@ -53,10 +53,10 @@ SELECT
     _raw_message AS raw_message,
     now64(3, 'Asia/Seoul') AS created_at,
     now64(3, 'Asia/Seoul') AS ingested_at
-FROM `Data_Prediction_Raw`.polymarket_events_kafka_queue
+FROM `Data_Prediction_Polymarket_Raw`.polymarket_events_kafka_queue
 WHERE length(ifNull(_error, '')) > 0;
 
-ALTER TABLE `Data_Prediction_Log`.mv_polymarket_kafka_queue_to_parse_error_local
+ALTER TABLE `Data_Prediction_Polymarket_Log`.mv_polymarket_kafka_queue_to_parse_error_local
 ON CLUSTER statground_cluster
 MODIFY COMMENT 'Materialized view from Polymarket Kafka Engine queue to Polymarket parse error log; malformed rows only; OLAP monitoring layer; SSOT 아님';
 
@@ -68,7 +68,7 @@ SELECT
     count() AS host_count,
     groupArray(hostName()) AS hosts
 FROM clusterAllReplicas('statground_cluster', system.tables)
-WHERE (database = 'Data_Prediction_Raw' AND name = 'mv_polymarket_kafka_queue_to_events')
-   OR (database = 'Data_Prediction_Log' AND name = 'mv_polymarket_kafka_queue_to_parse_error_local')
+WHERE (database = 'Data_Prediction_Polymarket_Raw' AND name = 'mv_polymarket_kafka_queue_to_events')
+   OR (database = 'Data_Prediction_Polymarket_Log' AND name = 'mv_polymarket_kafka_queue_to_parse_error_local')
 GROUP BY database, name, engine
 ORDER BY database, name, engine;

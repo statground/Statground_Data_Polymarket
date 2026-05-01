@@ -12,7 +12,7 @@ DBeaver-safe: this script creates tables only. Kafka materialized views are atta
 SET distributed_ddl_task_timeout = 180;
 SET distributed_ddl_output_mode = 'none_only_active';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Raw`.polymarket_events_local
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.polymarket_events_local
 ON CLUSTER statground_cluster
 (
     event_uuid UUID COMMENT 'Polymarket producer event UUID v7; ClickHouse stores UUID type; producer sends 36-char UUID v7 string',
@@ -31,13 +31,13 @@ ON CLUSTER statground_cluster
     created_at DateTime64(3, 'Asia/Seoul') COMMENT 'Producer event timestamp in Asia/Seoul; ORDER BY leading column',
     ingested_at DateTime64(3, 'Asia/Seoul') DEFAULT now64(3, 'Asia/Seoul') COMMENT 'ClickHouse ingestion timestamp in Asia/Seoul'
 )
-ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Raw/polymarket_events_local', '{replica}')
+ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Polymarket_Raw/polymarket_events_local', '{replica}')
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (created_at, event_uuid)
 SETTINGS index_granularity = 8192
 COMMENT 'Polymarket raw Kafka envelope local replicated table; OLAP only; SSOT 아님; TB-scale ORDER BY (created_at, event_uuid)';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Raw`.polymarket_events
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.polymarket_events
 ON CLUSTER statground_cluster
 (
     event_uuid UUID COMMENT 'Polymarket producer event UUID v7; ClickHouse stores UUID type; producer sends 36-char UUID v7 string',
@@ -56,10 +56,10 @@ ON CLUSTER statground_cluster
     created_at DateTime64(3, 'Asia/Seoul') COMMENT 'Producer event timestamp in Asia/Seoul; storage local table ORDER BY leading column',
     ingested_at DateTime64(3, 'Asia/Seoul') COMMENT 'ClickHouse ingestion timestamp in Asia/Seoul'
 )
-ENGINE = Distributed('statground_cluster', 'Data_Prediction_Raw', 'polymarket_events_local', cityHash64(toString(event_uuid)))
+ENGINE = Distributed('statground_cluster', 'Data_Prediction_Polymarket_Raw', 'polymarket_events_local', cityHash64(toString(event_uuid)))
 COMMENT 'Polymarket raw Kafka envelope distributed table; insert/read interface across statground_cluster; routes by event_uuid';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Raw`.polymarket_events_kafka_queue
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.polymarket_events_kafka_queue
 ON CLUSTER statground_cluster
 (
     event_uuid String COMMENT 'Polymarket UUID v7 string from Kafka JSON message; converted to UUID in materialized view',
@@ -91,7 +91,7 @@ SELECT
     count() AS host_count,
     groupArray(hostName()) AS hosts
 FROM clusterAllReplicas('statground_cluster', system.tables)
-WHERE database = 'Data_Prediction_Raw'
+WHERE database = 'Data_Prediction_Polymarket_Raw'
   AND name IN ('polymarket_events_local', 'polymarket_events', 'polymarket_events_kafka_queue')
 GROUP BY database, name, engine
 ORDER BY database, name, engine;

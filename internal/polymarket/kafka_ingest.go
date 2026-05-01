@@ -240,6 +240,7 @@ func kafkaEventKey(ev predictionKafkaEvent) string {
 
 func (i *Ingestor) rowEvent(entity string, row map[string]any) (predictionKafkaEvent, error) {
 	payload := cloneRowForKafka(entity, row)
+	payload = limitKafkaPayloadArrays(payload, i.cfg.KafkaMaxArrayItems)
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return predictionKafkaEvent{}, err
@@ -291,6 +292,17 @@ func (i *Ingestor) ensureKafkaEventSize(entity string, ev predictionKafkaEvent) 
 
 	if after > maxBytes {
 		payload = hardTrimKafkaPayload(payload)
+		payload = limitKafkaPayloadArrays(payload, minInt(i.cfg.KafkaMaxArrayItems, 64))
+		payloadJSON, err = json.Marshal(payload)
+		if err != nil {
+			return predictionKafkaEvent{}, err
+		}
+		ev.Payload = string(payloadJSON)
+		after = kafkaEventWireBytes(ev)
+	}
+
+	if after > maxBytes {
+		payload = emergencyTrimKafkaPayload(payload)
 		payloadJSON, err = json.Marshal(payload)
 		if err != nil {
 			return predictionKafkaEvent{}, err
@@ -343,6 +355,91 @@ func hardTrimKafkaPayload(payload map[string]any) map[string]any {
 	}
 	out["payload_policy"] = "large_text_fields_trimmed_after_raw_json_omission"
 	return out
+}
+
+func emergencyTrimKafkaPayload(payload map[string]any) map[string]any {
+	out := make(map[string]any, len(payload)+8)
+	keep := []string{
+		"event_id", "market_id", "series_id", "raw_key", "collected_at_utc", "created_at_utc", "updated_at_utc",
+		"slug", "ticker", "title", "question", "condition_id", "question_id",
+		"active", "approved", "archived", "closed", "restricted", "neg_risk",
+		"start_date_utc", "end_date_utc", "closed_time_utc", "creation_date_utc",
+		"best_ask", "best_bid", "last_trade_price", "spread", "liquidity", "volume", "volume_24h",
+		"recurrence", "series_type", "series_slug", "resolved_by", "resolution_source",
+	}
+	for _, key := range keep {
+		if value, ok := payload[key]; ok {
+			out[key] = value
+		}
+	}
+	for _, key := range []string{"title", "question"} {
+		if s := SafeString(out[key]); len([]byte(s)) > 2048 {
+			out[key] = TrimBody(s, 2048)
+			out[key+"_truncated"] = true
+		}
+	}
+	out["series_ids"] = []uint64{}
+	out["market_ids"] = []uint64{}
+	out["event_ids"] = []uint64{}
+	out["outcomes"] = []string{}
+	out["outcome_prices"] = []string{}
+	out["clob_token_ids"] = []string{}
+	out["raw_json"] = "{}"
+	out["payload_policy"] = "emergency_minimal_payload_after_kafka_message_size_limit"
+	return out
+}
+
+func limitKafkaPayloadArrays(payload map[string]any, maxItems int) map[string]any {
+	if payload == nil {
+		return payload
+	}
+	out := make(map[string]any, len(payload)+12)
+	for k, v := range payload {
+		out[k] = v
+	}
+	for _, key := range []string{"series_ids", "market_ids", "event_ids", "outcomes", "outcome_prices", "clob_token_ids"} {
+		value, ok := out[key]
+		if !ok {
+			continue
+		}
+		trimmed, originalCount, didTrim := trimJSONCompatibleArray(value, maxItems)
+		if !didTrim {
+			continue
+		}
+		out[key] = trimmed
+		out[key+"_original_count"] = originalCount
+		out[key+"_truncated"] = true
+		out["payload_policy"] = "large_array_fields_trimmed_for_kafka_message_size"
+	}
+	return out
+}
+
+func trimJSONCompatibleArray(value any, maxItems int) (any, int, bool) {
+	if maxItems < 0 {
+		maxItems = 0
+	}
+	switch arr := value.(type) {
+	case []uint64:
+		if len(arr) <= maxItems {
+			return value, len(arr), false
+		}
+		out := append([]uint64(nil), arr[:maxItems]...)
+		return out, len(arr), true
+	case []string:
+		if len(arr) <= maxItems {
+			return value, len(arr), false
+		}
+		out := append([]string(nil), arr[:maxItems]...)
+		return out, len(arr), true
+	case []any:
+		if len(arr) <= maxItems {
+			return value, len(arr), false
+		}
+		out := append([]any(nil), arr[:maxItems]...)
+		return out, len(arr), true
+	default:
+		return value, 0, false
+	}
 }
 
 func cloneRowForKafka(entity string, row map[string]any) map[string]any {

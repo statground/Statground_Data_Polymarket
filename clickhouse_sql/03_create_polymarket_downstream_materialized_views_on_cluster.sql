@@ -7,9 +7,9 @@ Polymarket materialized views:
 SET distributed_ddl_task_timeout = 180;
 SET distributed_ddl_output_mode = 'none_only_active';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Raw`.mv_polymarket_events_to_event_snapshot
+CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.mv_polymarket_events_to_event_snapshot
 ON CLUSTER statground_cluster
-TO `Data_Prediction_Raw`.polymarket_event_snapshot
+TO `Data_Prediction_Polymarket_Raw`.polymarket_event_snapshot
 AS
 SELECT
     JSONExtractUInt(payload, 'event_id') AS event_id,
@@ -37,17 +37,17 @@ SELECT
     toFloat64OrNull(nullIf(replaceRegexpAll(JSONExtractRaw(payload, 'volume'), '^"|"$', ''), 'null')) AS volume,
     JSONExtractString(payload, 'raw_json') AS raw_json,
     ingested_at AS ingested_at
-FROM `Data_Prediction_Raw`.polymarket_events_local
+FROM `Data_Prediction_Polymarket_Raw`.polymarket_events_local
 WHERE event_type = 'polymarket.event_snapshot_raw.v1'
   AND JSONExtractUInt(payload, 'event_id') > 0;
 
-ALTER TABLE `Data_Prediction_Raw`.mv_polymarket_events_to_event_snapshot
+ALTER TABLE `Data_Prediction_Polymarket_Raw`.mv_polymarket_events_to_event_snapshot
 ON CLUSTER statground_cluster
-MODIFY COMMENT 'Materialized view from Data_Prediction_Raw.polymarket_events_local to Polymarket event raw snapshots; OLAP parsing layer; SSOT 아님';
+MODIFY COMMENT 'Materialized view from Data_Prediction_Polymarket_Raw.polymarket_events_local to Polymarket event raw snapshots; OLAP parsing layer; SSOT 아님';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Raw`.mv_polymarket_events_to_market_snapshot
+CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.mv_polymarket_events_to_market_snapshot
 ON CLUSTER statground_cluster
-TO `Data_Prediction_Raw`.polymarket_market_snapshot
+TO `Data_Prediction_Polymarket_Raw`.polymarket_market_snapshot
 AS
 SELECT
     JSONExtractUInt(payload, 'market_id') AS market_id,
@@ -84,17 +84,17 @@ SELECT
     JSONExtract(payload, 'event_ids', 'Array(UInt64)') AS event_ids,
     JSONExtractString(payload, 'raw_json') AS raw_json,
     ingested_at AS ingested_at
-FROM `Data_Prediction_Raw`.polymarket_events_local
+FROM `Data_Prediction_Polymarket_Raw`.polymarket_events_local
 WHERE event_type = 'polymarket.market_snapshot_raw.v1'
   AND JSONExtractUInt(payload, 'market_id') > 0;
 
-ALTER TABLE `Data_Prediction_Raw`.mv_polymarket_events_to_market_snapshot
+ALTER TABLE `Data_Prediction_Polymarket_Raw`.mv_polymarket_events_to_market_snapshot
 ON CLUSTER statground_cluster
-MODIFY COMMENT 'Materialized view from Data_Prediction_Raw.polymarket_events_local to Polymarket market raw snapshots; OLAP parsing layer; SSOT 아님';
+MODIFY COMMENT 'Materialized view from Data_Prediction_Polymarket_Raw.polymarket_events_local to Polymarket market raw snapshots; OLAP parsing layer; SSOT 아님';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Raw`.mv_polymarket_events_to_series_snapshot
+CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.mv_polymarket_events_to_series_snapshot
 ON CLUSTER statground_cluster
-TO `Data_Prediction_Raw`.polymarket_series_snapshot
+TO `Data_Prediction_Polymarket_Raw`.polymarket_series_snapshot
 AS
 SELECT
     JSONExtractUInt(payload, 'series_id') AS series_id,
@@ -116,17 +116,17 @@ SELECT
     JSONExtract(payload, 'event_ids', 'Array(UInt64)') AS event_ids,
     JSONExtractString(payload, 'raw_json') AS raw_json,
     ingested_at AS ingested_at
-FROM `Data_Prediction_Raw`.polymarket_events_local
+FROM `Data_Prediction_Polymarket_Raw`.polymarket_events_local
 WHERE event_type = 'polymarket.series_snapshot_raw.v1'
   AND JSONExtractUInt(payload, 'series_id') > 0;
 
-ALTER TABLE `Data_Prediction_Raw`.mv_polymarket_events_to_series_snapshot
+ALTER TABLE `Data_Prediction_Polymarket_Raw`.mv_polymarket_events_to_series_snapshot
 ON CLUSTER statground_cluster
-MODIFY COMMENT 'Materialized view from Data_Prediction_Raw.polymarket_events_local to Polymarket series raw snapshots; OLAP parsing layer; SSOT 아님';
+MODIFY COMMENT 'Materialized view from Data_Prediction_Polymarket_Raw.polymarket_events_local to Polymarket series raw snapshots; OLAP parsing layer; SSOT 아님';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Raw`.mv_polymarket_events_to_crawl_checkpoint
+CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.mv_polymarket_events_to_crawl_checkpoint
 ON CLUSTER statground_cluster
-TO `Data_Prediction_Raw`.polymarket_crawl_checkpoint
+TO `Data_Prediction_Polymarket_Raw`.polymarket_crawl_checkpoint
 AS
 SELECT
     ifNull(toUUIDOrNull(JSONExtractString(payload, 'checkpoint_uuid')), event_uuid) AS checkpoint_uuid,
@@ -135,43 +135,43 @@ SELECT
     JSONExtractRaw(payload, 'checkpoint') AS checkpoint_json,
     coalesce(parseDateTime64BestEffortOrNull(JSONExtractString(payload, 'updated_at'), 3, 'Asia/Seoul'), created_at) AS updated_at,
     ingested_at AS ingested_at
-FROM `Data_Prediction_Raw`.polymarket_events_local
+FROM `Data_Prediction_Polymarket_Raw`.polymarket_events_local
 WHERE event_type = 'polymarket.crawl_checkpoint.v1';
 
-ALTER TABLE `Data_Prediction_Raw`.mv_polymarket_events_to_crawl_checkpoint
+ALTER TABLE `Data_Prediction_Polymarket_Raw`.mv_polymarket_events_to_crawl_checkpoint
 ON CLUSTER statground_cluster
-MODIFY COMMENT 'Materialized view from Data_Prediction_Raw.polymarket_events_local to Polymarket checkpoint log; OLAP monitoring layer; SSOT 아님';
+MODIFY COMMENT 'Materialized view from Data_Prediction_Polymarket_Raw.polymarket_events_local to Polymarket checkpoint log; OLAP monitoring layer; SSOT 아님';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Service`.mv_polymarket_event_snapshot_to_latest_local
+CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Polymarket_Service`.mv_polymarket_event_snapshot_to_latest_local
 ON CLUSTER statground_cluster
-TO `Data_Prediction_Service`.polymarket_event_latest_local
+TO `Data_Prediction_Polymarket_Service`.polymarket_event_latest_local
 AS
 SELECT *
-FROM `Data_Prediction_Raw`.polymarket_event_snapshot_local;
+FROM `Data_Prediction_Polymarket_Raw`.polymarket_event_snapshot_local;
 
-ALTER TABLE `Data_Prediction_Service`.mv_polymarket_event_snapshot_to_latest_local
+ALTER TABLE `Data_Prediction_Polymarket_Service`.mv_polymarket_event_snapshot_to_latest_local
 ON CLUSTER statground_cluster
 MODIFY COMMENT 'Materialized view from Polymarket event raw snapshots to Polymarket latest local service table; OLAP service layer; SSOT 아님';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Service`.mv_polymarket_market_snapshot_to_latest_local
+CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Polymarket_Service`.mv_polymarket_market_snapshot_to_latest_local
 ON CLUSTER statground_cluster
-TO `Data_Prediction_Service`.polymarket_market_latest_local
+TO `Data_Prediction_Polymarket_Service`.polymarket_market_latest_local
 AS
 SELECT *
-FROM `Data_Prediction_Raw`.polymarket_market_snapshot_local;
+FROM `Data_Prediction_Polymarket_Raw`.polymarket_market_snapshot_local;
 
-ALTER TABLE `Data_Prediction_Service`.mv_polymarket_market_snapshot_to_latest_local
+ALTER TABLE `Data_Prediction_Polymarket_Service`.mv_polymarket_market_snapshot_to_latest_local
 ON CLUSTER statground_cluster
 MODIFY COMMENT 'Materialized view from Polymarket market raw snapshots to Polymarket latest local service table; OLAP service layer; SSOT 아님';
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Service`.mv_polymarket_series_snapshot_to_latest_local
+CREATE MATERIALIZED VIEW IF NOT EXISTS `Data_Prediction_Polymarket_Service`.mv_polymarket_series_snapshot_to_latest_local
 ON CLUSTER statground_cluster
-TO `Data_Prediction_Service`.polymarket_series_latest_local
+TO `Data_Prediction_Polymarket_Service`.polymarket_series_latest_local
 AS
 SELECT *
-FROM `Data_Prediction_Raw`.polymarket_series_snapshot_local;
+FROM `Data_Prediction_Polymarket_Raw`.polymarket_series_snapshot_local;
 
-ALTER TABLE `Data_Prediction_Service`.mv_polymarket_series_snapshot_to_latest_local
+ALTER TABLE `Data_Prediction_Polymarket_Service`.mv_polymarket_series_snapshot_to_latest_local
 ON CLUSTER statground_cluster
 MODIFY COMMENT 'Materialized view from Polymarket series raw snapshots to Polymarket latest local service table; OLAP service layer; SSOT 아님';
 

@@ -14,7 +14,7 @@ SELECT
     count() AS host_count,
     groupArray(hostName()) AS hosts
 FROM clusterAllReplicas('statground_cluster', system.tables)
-WHERE database = 'Data_Prediction_Raw'
+WHERE database = 'Data_Prediction_Polymarket_Raw'
   AND name IN ('polymarket_events_local', 'polymarket_events', 'polymarket_events_kafka_queue')
 GROUP BY database, name, engine
 ORDER BY database, name, engine;

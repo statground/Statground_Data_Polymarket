@@ -10,16 +10,17 @@ import (
 )
 
 type Config struct {
-	PolyBase       string
-	PageLimit      int
-	MaxPages       int
-	Entities       []string
-	OrderPrimary   string
-	OrderFallback  string
-	RequestTimeout time.Duration
-	ConnectTimeout time.Duration
-	MaxRetries     int
-	BaseSleep      time.Duration
+	PolyBase             string
+	PageLimit            int
+	MaxPages             int
+	MaxPagesNoCheckpoint int
+	Entities             []string
+	OrderPrimary         string
+	OrderFallback        string
+	RequestTimeout       time.Duration
+	ConnectTimeout       time.Duration
+	MaxRetries           int
+	BaseSleep            time.Duration
 
 	InsertBatchSize        int
 	InsertBatchSizeEvents  int
@@ -37,6 +38,7 @@ type Config struct {
 	KafkaBatchTimeout    time.Duration
 	KafkaWriteChunkSize  int
 	KafkaMaxMessageBytes int
+	KafkaMaxArrayItems   int
 	ProducerSource       string
 	ProducerIP           string
 
@@ -60,16 +62,17 @@ func LoadConfig() (*Config, error) {
 
 	batchSize := envInt("BATCH_SIZE", envInt("INSERT_BATCH_SIZE", 1000))
 	cfg := &Config{
-		PolyBase:       strings.TrimRight(envString("POLY_BASE", "https://gamma-api.polymarket.com"), "/"),
-		PageLimit:      maxInt(1, envInt("PAGE_LIMIT", 100)),
-		MaxPages:       maxInt(1, envInt("MAX_PAGES", 200)),
-		Entities:       normalizePolymarketEntities(splitCSV(envString("ENTITIES", "events,markets,series"))),
-		OrderPrimary:   envString("ORDER_PRIMARY", "updatedAt"),
-		OrderFallback:  envString("ORDER_FALLBACK", "id"),
-		RequestTimeout: time.Duration(maxInt(1, envInt("REQUEST_TIMEOUT", 30))) * time.Second,
-		ConnectTimeout: time.Duration(maxInt(1, envInt("CONNECT_TIMEOUT", envInt("CH_CONNECT_TIMEOUT", 10)))) * time.Second,
-		MaxRetries:     maxInt(1, envInt("MAX_RETRIES", 6)),
-		BaseSleep:      envFloatDuration("BASE_SLEEP", 0.2),
+		PolyBase:             strings.TrimRight(envString("POLY_BASE", "https://gamma-api.polymarket.com"), "/"),
+		PageLimit:            maxInt(1, envInt("PAGE_LIMIT", 100)),
+		MaxPages:             maxInt(1, envInt("MAX_PAGES", 50)),
+		MaxPagesNoCheckpoint: envInt("MAX_PAGES_NO_CHECKPOINT", 20),
+		Entities:             normalizePolymarketEntities(splitCSV(envString("ENTITIES", "events,markets,series"))),
+		OrderPrimary:         envString("ORDER_PRIMARY", "updatedAt"),
+		OrderFallback:        envString("ORDER_FALLBACK", "id"),
+		RequestTimeout:       time.Duration(maxInt(1, envInt("REQUEST_TIMEOUT", 30))) * time.Second,
+		ConnectTimeout:       time.Duration(maxInt(1, envInt("CONNECT_TIMEOUT", envInt("CH_CONNECT_TIMEOUT", 10)))) * time.Second,
+		MaxRetries:           maxInt(1, envInt("MAX_RETRIES", 6)),
+		BaseSleep:            envFloatDuration("BASE_SLEEP", 0.2),
 
 		InsertBatchSize:        maxInt(1, batchSize),
 		InsertBatchSizeEvents:  maxInt(1, envInt("BATCH_SIZE_EVENTS", envInt("INSERT_BATCH_SIZE_EVENTS", batchSize))),
@@ -82,11 +85,12 @@ func LoadConfig() (*Config, error) {
 		KafkaPassword:        firstNonEmpty(os.Getenv("KAFKA_PASSWORD"), os.Getenv("KAFKA_EXTERNAL_PASSWORD")),
 		KafkaTopic:           envString("KAFKA_TOPIC", "prediction.events"),
 		KafkaClientID:        envString("KAFKA_CLIENT_ID", "statground-polymarket-crawler"),
-		KafkaBatchSize:       maxInt(1, envInt("KAFKA_BATCH_SIZE", 10)),
-		KafkaBatchBytes:      maxInt(65536, envInt("KAFKA_BATCH_BYTES", 524288)),
-		KafkaBatchTimeout:    envFloatDuration("KAFKA_BATCH_TIMEOUT", 1.0),
-		KafkaWriteChunkSize:  maxInt(1, envInt("KAFKA_WRITE_CHUNK_SIZE", envInt("KAFKA_BATCH_SIZE", 10))),
-		KafkaMaxMessageBytes: maxInt(262144, envInt("KAFKA_MAX_MESSAGE_BYTES", 900000)),
+		KafkaBatchSize:       maxInt(1, envInt("KAFKA_BATCH_SIZE", 1)),
+		KafkaBatchBytes:      maxInt(65536, envInt("KAFKA_BATCH_BYTES", 262144)),
+		KafkaBatchTimeout:    envFloatDuration("KAFKA_BATCH_TIMEOUT", 0.5),
+		KafkaWriteChunkSize:  maxInt(1, envInt("KAFKA_WRITE_CHUNK_SIZE", envInt("KAFKA_BATCH_SIZE", 1))),
+		KafkaMaxMessageBytes: maxInt(131072, envInt("KAFKA_MAX_MESSAGE_BYTES", 524288)),
+		KafkaMaxArrayItems:   maxInt(0, envInt("KAFKA_MAX_ARRAY_ITEMS", 512)),
 		ProducerSource:       envString("PRODUCER_SOURCE", "github_actions"),
 		ProducerIP:           envString("PRODUCER_IP", "::"),
 

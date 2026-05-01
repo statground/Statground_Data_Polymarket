@@ -60,8 +60,13 @@ func (i *Ingestor) FetchAndPublish(ctx context.Context, entity string, checkpoin
 	totalWritten := 0
 	rows := make([]map[string]any, 0, i.cfg.InsertBatchSizeForEntity(entity))
 	url := i.cfg.Endpoint(entity)
+	effectiveMaxPages := i.cfg.MaxPages
+	if strings.TrimSpace(lastCP) == "" && i.cfg.MaxPagesNoCheckpoint > 0 {
+		effectiveMaxPages = minInt(effectiveMaxPages, i.cfg.MaxPagesNoCheckpoint)
+		fmt.Printf("[BOOTSTRAP-CAP] %s checkpoint is empty; max_pages capped to %d by MAX_PAGES_NO_CHECKPOINT to keep GitHub Actions bounded. Override only for manual backfill.\n", entity, effectiveMaxPages)
+	}
 
-	for page := 0; page < i.cfg.MaxPages; page++ {
+	for page := 0; page < effectiveMaxPages; page++ {
 		offset := page * i.cfg.PageLimit
 		data, meta, err := i.api.SafeGetJSON(ctx, url, map[string]string{
 			"limit":     fmt.Sprint(i.cfg.PageLimit),
@@ -138,17 +143,21 @@ func RunIngest() error {
 		return err
 	}
 
-	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s entities=%s batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d kafka_batch_bytes=%d kafka_max_message_bytes=%d\n",
+	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s entities=%s max_pages=%d max_pages_no_checkpoint=%d batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d kafka_write_chunk_size=%d kafka_batch_bytes=%d kafka_max_message_bytes=%d kafka_max_array_items=%d\n",
 		cfg.IngestMode,
 		cfg.KafkaTopic,
 		joinCSV(cfg.Entities),
+		cfg.MaxPages,
+		cfg.MaxPagesNoCheckpoint,
 		cfg.InsertBatchSize,
 		cfg.InsertBatchSizeForEntity("events"),
 		cfg.InsertBatchSizeForEntity("markets"),
 		cfg.InsertBatchSizeForEntity("series"),
 		cfg.KafkaBatchSize,
+		cfg.KafkaWriteChunkSize,
 		cfg.KafkaBatchBytes,
 		cfg.KafkaMaxMessageBytes,
+		cfg.KafkaMaxArrayItems,
 	)
 
 	ctx := context.Background()

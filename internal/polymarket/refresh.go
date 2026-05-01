@@ -100,18 +100,21 @@ func RunRefresh() error {
 		return err
 	}
 
-	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s entities=%s lookback_hours=%d batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d kafka_batch_bytes=%d kafka_max_message_bytes=%d\n",
+	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s entities=%s max_pages=%d lookback_hours=%d batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d kafka_write_chunk_size=%d kafka_batch_bytes=%d kafka_max_message_bytes=%d kafka_max_array_items=%d\n",
 		cfg.IngestMode,
 		cfg.KafkaTopic,
 		joinCSV(cfg.Entities),
+		cfg.MaxPages,
 		cfg.LookbackHours,
 		cfg.InsertBatchSize,
 		cfg.InsertBatchSizeForEntity("events"),
 		cfg.InsertBatchSizeForEntity("markets"),
 		cfg.InsertBatchSizeForEntity("series"),
 		cfg.KafkaBatchSize,
+		cfg.KafkaWriteChunkSize,
 		cfg.KafkaBatchBytes,
 		cfg.KafkaMaxMessageBytes,
+		cfg.KafkaMaxArrayItems,
 	)
 
 	ctx := context.Background()

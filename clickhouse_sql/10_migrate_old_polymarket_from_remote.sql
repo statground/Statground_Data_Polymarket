@@ -18,7 +18,7 @@ Old tables are ReplacingMergeTree latest tables. FINAL is used to avoid migratin
 If the old cluster rejects FINAL on remote(), run OPTIMIZE TABLE statground_polymarket.<table> FINAL on the old cluster first, then remove FINAL here.
 */
 
-INSERT INTO `Data_Prediction_Raw`.polymarket_event_snapshot
+INSERT INTO `Data_Prediction_Polymarket_Raw`.polymarket_event_snapshot
 (
     event_id, raw_key, collected_at_utc, created_at_utc, updated_at_utc,
     title, ticker, slug, description,
@@ -56,7 +56,7 @@ SELECT
 FROM remote('OLD_CLICKHOUSE_HOST:9000', 'statground_polymarket', 'polymarket_event', 'OLD_USER', 'OLD_PASSWORD') FINAL
 SETTINGS insert_distributed_sync = 1;
 
-INSERT INTO `Data_Prediction_Raw`.polymarket_market_snapshot
+INSERT INTO `Data_Prediction_Polymarket_Raw`.polymarket_market_snapshot
 (
     market_id, raw_key, collected_at_utc, created_at_utc, updated_at_utc,
     condition_id, question_id, slug, question, description,
@@ -106,7 +106,7 @@ SELECT
 FROM remote('OLD_CLICKHOUSE_HOST:9000', 'statground_polymarket', 'polymarket_market', 'OLD_USER', 'OLD_PASSWORD') FINAL
 SETTINGS insert_distributed_sync = 1;
 
-INSERT INTO `Data_Prediction_Raw`.polymarket_series_snapshot
+INSERT INTO `Data_Prediction_Polymarket_Raw`.polymarket_series_snapshot
 (
     series_id, raw_key, collected_at_utc, created_at_utc, updated_at_utc,
     slug, ticker, title,
@@ -139,14 +139,14 @@ FROM remote('OLD_CLICKHOUSE_HOST:9000', 'statground_polymarket', 'polymarket_ser
 SETTINGS insert_distributed_sync = 1;
 
 /* Validation: raw snapshot counts */
-SELECT 'event_raw' AS table_name, count() AS snapshot_rows, uniqExact(event_id) AS uniq_objects FROM `Data_Prediction_Raw`.polymarket_event_snapshot;
-SELECT 'market_raw' AS table_name, count() AS snapshot_rows, uniqExact(market_id) AS uniq_objects FROM `Data_Prediction_Raw`.polymarket_market_snapshot;
-SELECT 'series_raw' AS table_name, count() AS snapshot_rows, uniqExact(series_id) AS uniq_objects FROM `Data_Prediction_Raw`.polymarket_series_snapshot;
+SELECT 'event_raw' AS table_name, count() AS snapshot_rows, uniqExact(event_id) AS uniq_objects FROM `Data_Prediction_Polymarket_Raw`.polymarket_event_snapshot;
+SELECT 'market_raw' AS table_name, count() AS snapshot_rows, uniqExact(market_id) AS uniq_objects FROM `Data_Prediction_Polymarket_Raw`.polymarket_market_snapshot;
+SELECT 'series_raw' AS table_name, count() AS snapshot_rows, uniqExact(series_id) AS uniq_objects FROM `Data_Prediction_Polymarket_Raw`.polymarket_series_snapshot;
 
 /* Validation: latest service rows. FINAL is only for exact validation; routine analytical queries should avoid unnecessary FINAL. */
-SELECT 'event_latest' AS table_name, count() AS latest_rows FROM `Data_Prediction_Service`.polymarket_event_latest FINAL;
-SELECT 'market_latest' AS table_name, count() AS latest_rows FROM `Data_Prediction_Service`.polymarket_market_latest FINAL;
-SELECT 'series_latest' AS table_name, count() AS latest_rows FROM `Data_Prediction_Service`.polymarket_series_latest FINAL;
+SELECT 'event_latest' AS table_name, count() AS latest_rows FROM `Data_Prediction_Polymarket_Service`.polymarket_event_latest FINAL;
+SELECT 'market_latest' AS table_name, count() AS latest_rows FROM `Data_Prediction_Polymarket_Service`.polymarket_market_latest FINAL;
+SELECT 'series_latest' AS table_name, count() AS latest_rows FROM `Data_Prediction_Polymarket_Service`.polymarket_series_latest FINAL;
 
 /* Validation: ClickHouse-side Polymarket statistics mart */
 SELECT
@@ -155,7 +155,7 @@ SELECT
     sum(snapshot_count) AS snapshot_count,
     uniqMerge(object_uniq_state) AS uniq_objects,
     max(last_ingested_at) AS last_ingested_at
-FROM `Data_Prediction_Mart`.polymarket_collection_stats_hourly
+FROM `Data_Prediction_Polymarket_Mart`.polymarket_collection_stats_hourly
 WHERE service = 'polymarket'
 GROUP BY service, entity
 ORDER BY service, entity;

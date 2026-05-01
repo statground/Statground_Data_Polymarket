@@ -7,7 +7,7 @@ Service tables keep latest object state with ReplicatedReplacingMergeTree.
 SET distributed_ddl_task_timeout = 180;
 SET distributed_ddl_output_mode = 'none_only_active';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Raw`.polymarket_event_snapshot_local
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.polymarket_event_snapshot_local
 ON CLUSTER statground_cluster
 (
     event_id UInt64 COMMENT 'Polymarket event id from Gamma API',
@@ -36,19 +36,19 @@ ON CLUSTER statground_cluster
     raw_json String COMMENT 'Polymarket API raw JSON string after producer-side pruning of large nested entity arrays; OLAP raw retention only; SSOT 아님',
     ingested_at DateTime64(3, 'Asia/Seoul') DEFAULT now64(3, 'Asia/Seoul') COMMENT 'ClickHouse ingestion timestamp in Asia/Seoul'
 )
-ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Raw/polymarket_event_snapshot_local', '{replica}')
+ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Polymarket_Raw/polymarket_event_snapshot_local', '{replica}')
 PARTITION BY toYYYYMM(collected_at_utc)
 ORDER BY (collected_at_utc, event_id, raw_key)
 SETTINGS index_granularity = 8192
 COMMENT 'Polymarket event raw snapshot local table; append-only OLAP raw data; SSOT 아님; TB-scale ORDER BY starts with collection time';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Raw`.polymarket_event_snapshot
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.polymarket_event_snapshot
 ON CLUSTER statground_cluster
-AS `Data_Prediction_Raw`.polymarket_event_snapshot_local
-ENGINE = Distributed('statground_cluster', 'Data_Prediction_Raw', 'polymarket_event_snapshot_local', cityHash64(event_id))
+AS `Data_Prediction_Polymarket_Raw`.polymarket_event_snapshot_local
+ENGINE = Distributed('statground_cluster', 'Data_Prediction_Polymarket_Raw', 'polymarket_event_snapshot_local', cityHash64(event_id))
 COMMENT 'Polymarket event raw snapshot distributed table; insert/read interface across statground_cluster; routes by event_id';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Raw`.polymarket_market_snapshot_local
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.polymarket_market_snapshot_local
 ON CLUSTER statground_cluster
 (
     market_id UInt64 COMMENT 'Polymarket market id from Gamma API',
@@ -86,19 +86,19 @@ ON CLUSTER statground_cluster
     raw_json String COMMENT 'Polymarket API raw JSON string after producer-side pruning of large nested entity arrays; OLAP raw retention only; SSOT 아님',
     ingested_at DateTime64(3, 'Asia/Seoul') DEFAULT now64(3, 'Asia/Seoul') COMMENT 'ClickHouse ingestion timestamp in Asia/Seoul'
 )
-ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Raw/polymarket_market_snapshot_local', '{replica}')
+ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Polymarket_Raw/polymarket_market_snapshot_local', '{replica}')
 PARTITION BY toYYYYMM(collected_at_utc)
 ORDER BY (collected_at_utc, market_id, raw_key)
 SETTINGS index_granularity = 8192
 COMMENT 'Polymarket market raw snapshot local table; append-only OLAP raw data; SSOT 아님; TB-scale ORDER BY starts with collection time';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Raw`.polymarket_market_snapshot
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.polymarket_market_snapshot
 ON CLUSTER statground_cluster
-AS `Data_Prediction_Raw`.polymarket_market_snapshot_local
-ENGINE = Distributed('statground_cluster', 'Data_Prediction_Raw', 'polymarket_market_snapshot_local', cityHash64(market_id))
+AS `Data_Prediction_Polymarket_Raw`.polymarket_market_snapshot_local
+ENGINE = Distributed('statground_cluster', 'Data_Prediction_Polymarket_Raw', 'polymarket_market_snapshot_local', cityHash64(market_id))
 COMMENT 'Polymarket market raw snapshot distributed table; insert/read interface across statground_cluster; routes by market_id';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Raw`.polymarket_series_snapshot_local
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.polymarket_series_snapshot_local
 ON CLUSTER statground_cluster
 (
     series_id UInt64 COMMENT 'Polymarket series id from Gamma API',
@@ -121,65 +121,65 @@ ON CLUSTER statground_cluster
     raw_json String COMMENT 'Polymarket API raw JSON string after producer-side pruning of large nested entity arrays; OLAP raw retention only; SSOT 아님',
     ingested_at DateTime64(3, 'Asia/Seoul') DEFAULT now64(3, 'Asia/Seoul') COMMENT 'ClickHouse ingestion timestamp in Asia/Seoul'
 )
-ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Raw/polymarket_series_snapshot_local', '{replica}')
+ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Polymarket_Raw/polymarket_series_snapshot_local', '{replica}')
 PARTITION BY toYYYYMM(collected_at_utc)
 ORDER BY (collected_at_utc, series_id, raw_key)
 SETTINGS index_granularity = 8192
 COMMENT 'Polymarket series raw snapshot local table; append-only OLAP raw data; SSOT 아님; TB-scale ORDER BY starts with collection time';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Raw`.polymarket_series_snapshot
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.polymarket_series_snapshot
 ON CLUSTER statground_cluster
-AS `Data_Prediction_Raw`.polymarket_series_snapshot_local
-ENGINE = Distributed('statground_cluster', 'Data_Prediction_Raw', 'polymarket_series_snapshot_local', cityHash64(series_id))
+AS `Data_Prediction_Polymarket_Raw`.polymarket_series_snapshot_local
+ENGINE = Distributed('statground_cluster', 'Data_Prediction_Polymarket_Raw', 'polymarket_series_snapshot_local', cityHash64(series_id))
 COMMENT 'Polymarket series raw snapshot distributed table; insert/read interface across statground_cluster; routes by series_id';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Service`.polymarket_event_latest_local
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Service`.polymarket_event_latest_local
 ON CLUSTER statground_cluster
-AS `Data_Prediction_Raw`.polymarket_event_snapshot_local
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Service/polymarket_event_latest_local', '{replica}', collected_at_utc)
+AS `Data_Prediction_Polymarket_Raw`.polymarket_event_snapshot_local
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Polymarket_Service/polymarket_event_latest_local', '{replica}', collected_at_utc)
 PARTITION BY cityHash64(event_id) % 128
 ORDER BY event_id
 SETTINGS index_granularity = 8192
 COMMENT 'Polymarket event latest local table; OLAP service layer; ReplacingMergeTree keeps latest per event_id by collected_at_utc; SSOT 아님';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Service`.polymarket_event_latest
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Service`.polymarket_event_latest
 ON CLUSTER statground_cluster
-AS `Data_Prediction_Service`.polymarket_event_latest_local
-ENGINE = Distributed('statground_cluster', 'Data_Prediction_Service', 'polymarket_event_latest_local', cityHash64(event_id))
+AS `Data_Prediction_Polymarket_Service`.polymarket_event_latest_local
+ENGINE = Distributed('statground_cluster', 'Data_Prediction_Polymarket_Service', 'polymarket_event_latest_local', cityHash64(event_id))
 COMMENT 'Polymarket event latest distributed table; read interface across statground_cluster; use FINAL only when exact latest rows are required';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Service`.polymarket_market_latest_local
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Service`.polymarket_market_latest_local
 ON CLUSTER statground_cluster
-AS `Data_Prediction_Raw`.polymarket_market_snapshot_local
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Service/polymarket_market_latest_local', '{replica}', collected_at_utc)
+AS `Data_Prediction_Polymarket_Raw`.polymarket_market_snapshot_local
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Polymarket_Service/polymarket_market_latest_local', '{replica}', collected_at_utc)
 PARTITION BY cityHash64(market_id) % 128
 ORDER BY market_id
 SETTINGS index_granularity = 8192
 COMMENT 'Polymarket market latest local table; OLAP service layer; ReplacingMergeTree keeps latest per market_id by collected_at_utc; SSOT 아님';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Service`.polymarket_market_latest
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Service`.polymarket_market_latest
 ON CLUSTER statground_cluster
-AS `Data_Prediction_Service`.polymarket_market_latest_local
-ENGINE = Distributed('statground_cluster', 'Data_Prediction_Service', 'polymarket_market_latest_local', cityHash64(market_id))
+AS `Data_Prediction_Polymarket_Service`.polymarket_market_latest_local
+ENGINE = Distributed('statground_cluster', 'Data_Prediction_Polymarket_Service', 'polymarket_market_latest_local', cityHash64(market_id))
 COMMENT 'Polymarket market latest distributed table; read interface across statground_cluster; use FINAL only when exact latest rows are required';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Service`.polymarket_series_latest_local
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Service`.polymarket_series_latest_local
 ON CLUSTER statground_cluster
-AS `Data_Prediction_Raw`.polymarket_series_snapshot_local
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Service/polymarket_series_latest_local', '{replica}', collected_at_utc)
+AS `Data_Prediction_Polymarket_Raw`.polymarket_series_snapshot_local
+ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Polymarket_Service/polymarket_series_latest_local', '{replica}', collected_at_utc)
 PARTITION BY cityHash64(series_id) % 128
 ORDER BY series_id
 SETTINGS index_granularity = 8192
 COMMENT 'Polymarket series latest local table; OLAP service layer; ReplacingMergeTree keeps latest per series_id by collected_at_utc; SSOT 아님';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Service`.polymarket_series_latest
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Service`.polymarket_series_latest
 ON CLUSTER statground_cluster
-AS `Data_Prediction_Service`.polymarket_series_latest_local
-ENGINE = Distributed('statground_cluster', 'Data_Prediction_Service', 'polymarket_series_latest_local', cityHash64(series_id))
+AS `Data_Prediction_Polymarket_Service`.polymarket_series_latest_local
+ENGINE = Distributed('statground_cluster', 'Data_Prediction_Polymarket_Service', 'polymarket_series_latest_local', cityHash64(series_id))
 COMMENT 'Polymarket series latest distributed table; read interface across statground_cluster; use FINAL only when exact latest rows are required';
 
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Raw`.polymarket_crawl_checkpoint_local
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.polymarket_crawl_checkpoint_local
 ON CLUSTER statground_cluster
 (
     checkpoint_uuid UUID COMMENT 'UUID v7 checkpoint event id; producer sends 36-char UUID v7 string; ClickHouse stores UUID type',
@@ -189,16 +189,16 @@ ON CLUSTER statground_cluster
     updated_at DateTime64(3, 'Asia/Seoul') COMMENT 'Checkpoint update timestamp in Asia/Seoul; ORDER BY leading column',
     ingested_at DateTime64(3, 'Asia/Seoul') DEFAULT now64(3, 'Asia/Seoul') COMMENT 'ClickHouse ingestion timestamp in Asia/Seoul'
 )
-ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Raw/polymarket_crawl_checkpoint_local', '{replica}')
+ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/Data_Prediction_Polymarket_Raw/polymarket_crawl_checkpoint_local', '{replica}')
 PARTITION BY toYYYYMM(updated_at)
 ORDER BY (updated_at, source, checkpoint_uuid)
 SETTINGS index_granularity = 8192
 COMMENT 'Polymarket crawler checkpoint log local table; OLAP monitoring only; SSOT 아님; TB-scale ORDER BY starts with updated_at';
 
-CREATE TABLE IF NOT EXISTS `Data_Prediction_Raw`.polymarket_crawl_checkpoint
+CREATE TABLE IF NOT EXISTS `Data_Prediction_Polymarket_Raw`.polymarket_crawl_checkpoint
 ON CLUSTER statground_cluster
-AS `Data_Prediction_Raw`.polymarket_crawl_checkpoint_local
-ENGINE = Distributed('statground_cluster', 'Data_Prediction_Raw', 'polymarket_crawl_checkpoint_local', cityHash64(toString(checkpoint_uuid)))
+AS `Data_Prediction_Polymarket_Raw`.polymarket_crawl_checkpoint_local
+ENGINE = Distributed('statground_cluster', 'Data_Prediction_Polymarket_Raw', 'polymarket_crawl_checkpoint_local', cityHash64(toString(checkpoint_uuid)))
 COMMENT 'Polymarket crawler checkpoint distributed table; read interface across statground_cluster; OLAP only; SSOT 아님';
 
 SELECT
@@ -207,6 +207,6 @@ SELECT
     name,
     engine
 FROM clusterAllReplicas('statground_cluster', system.tables)
-WHERE (database = 'Data_Prediction_Raw' AND name LIKE 'polymarket%')
-   OR (database = 'Data_Prediction_Service' AND name LIKE 'polymarket%')
+WHERE (database = 'Data_Prediction_Polymarket_Raw' AND name LIKE 'polymarket%')
+   OR (database = 'Data_Prediction_Polymarket_Service' AND name LIKE 'polymarket%')
 ORDER BY database, name, remote_host;
