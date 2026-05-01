@@ -330,6 +330,27 @@ func MaxTimeISO(existing string, candidate string) string {
 	return existing
 }
 
+func MinTimeISO(existing string, candidate string) string {
+	if candidate == "" {
+		return existing
+	}
+	if existing == "" {
+		return candidate
+	}
+	te := ParseISOUTC(existing)
+	tc := ParseISOUTC(candidate)
+	if te == nil {
+		return candidate
+	}
+	if tc == nil {
+		return existing
+	}
+	if tc.Before(*te) {
+		return candidate
+	}
+	return existing
+}
+
 func CopyMapStringString(src map[string]string) map[string]string {
 	dst := make(map[string]string, len(src))
 	for k, v := range src {

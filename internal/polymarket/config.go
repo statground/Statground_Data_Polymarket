@@ -36,6 +36,7 @@ type Config struct {
 	KafkaBatchSize       int
 	KafkaBatchBytes      int
 	KafkaBatchTimeout    time.Duration
+	KafkaWriteTimeout    time.Duration
 	KafkaWriteChunkSize  int
 	KafkaMaxMessageBytes int
 	KafkaMaxArrayItems   int
@@ -49,7 +50,9 @@ type Config struct {
 	CheckpointPath   string
 	StateBackend     string
 
-	LookbackHours int
+	LookbackHours              int
+	RunSoftDeadline            time.Duration
+	RefreshMaxObjectsPerEntity int
 
 	RepoRoot string
 }
@@ -88,6 +91,7 @@ func LoadConfig() (*Config, error) {
 		KafkaBatchSize:       maxInt(1, envInt("KAFKA_BATCH_SIZE", 1)),
 		KafkaBatchBytes:      maxInt(65536, envInt("KAFKA_BATCH_BYTES", 262144)),
 		KafkaBatchTimeout:    envFloatDuration("KAFKA_BATCH_TIMEOUT", 0.5),
+		KafkaWriteTimeout:    time.Duration(maxInt(1, envInt("KAFKA_WRITE_TIMEOUT", envInt("KAFKA_WRITE_TIMEOUT_SECONDS", 30)))) * time.Second,
 		KafkaWriteChunkSize:  maxInt(1, envInt("KAFKA_WRITE_CHUNK_SIZE", envInt("KAFKA_BATCH_SIZE", 1))),
 		KafkaMaxMessageBytes: maxInt(131072, envInt("KAFKA_MAX_MESSAGE_BYTES", 524288)),
 		KafkaMaxArrayItems:   maxInt(0, envInt("KAFKA_MAX_ARRAY_ITEMS", 512)),
@@ -101,7 +105,9 @@ func LoadConfig() (*Config, error) {
 		CheckpointPath:   envString("CHECKPOINT_PATH", ".statground_state/polymarket_checkpoint.json"),
 		StateBackend:     strings.ToLower(envString("STATE_BACKEND", "local")),
 
-		LookbackHours: maxInt(1, envInt("LOOKBACK_HOURS", 72)),
+		LookbackHours:              maxInt(1, envInt("LOOKBACK_HOURS", 72)),
+		RunSoftDeadline:            time.Duration(maxInt(0, envInt("RUN_SOFT_DEADLINE_SECONDS", envInt("REFRESH_SOFT_DEADLINE_SECONDS", 0)))) * time.Second,
+		RefreshMaxObjectsPerEntity: maxInt(0, envInt("REFRESH_MAX_OBJECTS_PER_ENTITY", 0)),
 
 		RepoRoot: repoRoot,
 	}

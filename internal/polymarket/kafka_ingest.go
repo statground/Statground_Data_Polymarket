@@ -124,6 +124,8 @@ func (i *Ingestor) kafkaWriter() *kafka.Writer {
 		BatchSize:              i.cfg.KafkaBatchSize,
 		BatchBytes:             int64(i.cfg.KafkaBatchBytes),
 		BatchTimeout:           i.cfg.KafkaBatchTimeout,
+		WriteTimeout:           i.cfg.KafkaWriteTimeout,
+		ReadTimeout:            i.cfg.KafkaWriteTimeout,
 	}
 	if strings.TrimSpace(i.cfg.KafkaClientID) != "" || strings.TrimSpace(i.cfg.KafkaUsername) != "" {
 		transport := &kafka.Transport{ClientID: i.cfg.KafkaClientID}

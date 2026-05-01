@@ -8,7 +8,7 @@ on:
         required: false
         default: "events,markets,series"
       max_pages:
-        description: "Optional MAX_PAGES override for this run."
+        description: "Optional MAX_PAGES override for this run. Default uses POLYMARKET_REFRESH_MAX_PAGES or 50."
         required: false
         default: ""
   schedule:
@@ -24,7 +24,7 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
 
     env:
       STATE_BACKEND: local
@@ -38,16 +38,19 @@ jobs:
       PRODUCER_IP: "::"
       ENTITIES: ${{ github.event.inputs.entities || vars.POLYMARKET_ENTITIES || 'events,markets,series' }}
       MAX_PAGES_NO_CHECKPOINT: ${{ vars.POLYMARKET_MAX_PAGES_NO_CHECKPOINT || '20' }}
-      MAX_PAGES: ${{ github.event.inputs.max_pages || vars.POLYMARKET_MAX_PAGES || '50' }}
+      MAX_PAGES: ${{ github.event.inputs.max_pages || vars.POLYMARKET_REFRESH_MAX_PAGES || '50' }}
       LOOKBACK_HOURS: ${{ vars.POLYMARKET_LOOKBACK_HOURS || '72' }}
+      RUN_SOFT_DEADLINE_SECONDS: ${{ vars.POLYMARKET_REFRESH_SOFT_DEADLINE_SECONDS || '3300' }}
+      REFRESH_MAX_OBJECTS_PER_ENTITY: ${{ vars.POLYMARKET_REFRESH_MAX_OBJECTS_PER_ENTITY || '0' }}
       BATCH_SIZE: ${{ vars.POLYMARKET_BATCH_SIZE || vars.POLYMARKET_INSERT_BATCH_SIZE || '500' }}
       BATCH_SIZE_SERIES: ${{ vars.POLYMARKET_BATCH_SIZE_SERIES || vars.POLYMARKET_INSERT_BATCH_SIZE_SERIES || '50' }}
-      KAFKA_BATCH_SIZE: ${{ vars.POLYMARKET_KAFKA_BATCH_SIZE || '1' }}
-      KAFKA_WRITE_CHUNK_SIZE: ${{ vars.POLYMARKET_KAFKA_WRITE_CHUNK_SIZE || '1' }}
-      KAFKA_BATCH_BYTES: ${{ vars.POLYMARKET_KAFKA_BATCH_BYTES || '262144' }}
+      KAFKA_BATCH_SIZE: ${{ vars.POLYMARKET_KAFKA_BATCH_SIZE || '50' }}
+      KAFKA_WRITE_CHUNK_SIZE: ${{ vars.POLYMARKET_KAFKA_WRITE_CHUNK_SIZE || '50' }}
+      KAFKA_BATCH_BYTES: ${{ vars.POLYMARKET_KAFKA_BATCH_BYTES || '1048576' }}
       KAFKA_MAX_ARRAY_ITEMS: ${{ vars.POLYMARKET_KAFKA_MAX_ARRAY_ITEMS || '512' }}
       KAFKA_MAX_MESSAGE_BYTES: ${{ vars.POLYMARKET_KAFKA_MAX_MESSAGE_BYTES || '524288' }}
       KAFKA_BATCH_TIMEOUT: ${{ vars.POLYMARKET_KAFKA_BATCH_TIMEOUT || '0.5' }}
+      KAFKA_WRITE_TIMEOUT_SECONDS: ${{ vars.POLYMARKET_KAFKA_WRITE_TIMEOUT_SECONDS || '30' }}
       REQUEST_TIMEOUT: ${{ vars.POLYMARKET_REQUEST_TIMEOUT || '30' }}
       CONNECT_TIMEOUT: ${{ vars.POLYMARKET_CONNECT_TIMEOUT || '10' }}
       MAX_RETRIES: ${{ vars.POLYMARKET_MAX_RETRIES || '6' }}
