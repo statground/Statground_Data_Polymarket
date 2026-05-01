@@ -1,0 +1,101 @@
+name: Polymarket - Refresh recent history to Kafka
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "20 */6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: polymarket-refresh-history
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    env:
+      STATE_BACKEND: local
+      STATE_DIR: .statground_state
+      CHECKPOINT_PATH: .statground_state/polymarket_checkpoint.json
+      POLY_BASE: https://gamma-api.polymarket.com
+      INGEST_MODE: kafka
+      KAFKA_TOPIC: prediction.events
+      KAFKA_CLIENT_ID: statground-polymarket-refresh-history
+      PRODUCER_SOURCE: github_actions
+      PRODUCER_IP: "::"
+      LOOKBACK_HOURS: ${{ vars.POLYMARKET_LOOKBACK_HOURS || '72' }}
+      BATCH_SIZE: ${{ vars.POLYMARKET_BATCH_SIZE || vars.POLYMARKET_INSERT_BATCH_SIZE || '1000' }}
+      BATCH_SIZE_SERIES: ${{ vars.POLYMARKET_BATCH_SIZE_SERIES || vars.POLYMARKET_INSERT_BATCH_SIZE_SERIES || '200' }}
+      KAFKA_BATCH_SIZE: ${{ vars.POLYMARKET_KAFKA_BATCH_SIZE || '100' }}
+      KAFKA_BATCH_TIMEOUT: ${{ vars.POLYMARKET_KAFKA_BATCH_TIMEOUT || '1.0' }}
+      REQUEST_TIMEOUT: ${{ vars.POLYMARKET_REQUEST_TIMEOUT || '30' }}
+      CONNECT_TIMEOUT: ${{ vars.POLYMARKET_CONNECT_TIMEOUT || '10' }}
+      MAX_RETRIES: ${{ vars.POLYMARKET_MAX_RETRIES || '6' }}
+      BASE_SLEEP: ${{ vars.POLYMARKET_BASE_SLEEP || '0.2' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Restore crawler state
+        uses: actions/cache/restore@v4
+        with:
+          path: .statground_state
+          key: polymarket-crawler-state-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            polymarket-crawler-state-${{ github.ref_name }}-
+            polymarket-crawler-state-
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Validate required Kafka secrets
+        env:
+          KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS }}
+          KAFKA_USERNAME: ${{ secrets.KAFKA_USERNAME || secrets.KAFKA_EXTERNAL_USER }}
+          KAFKA_PASSWORD: ${{ secrets.KAFKA_PASSWORD || secrets.KAFKA_EXTERNAL_PASSWORD }}
+        run: |
+          test -n "$KAFKA_BROKERS" || { echo "KAFKA_BROKERS secret is required"; exit 1; }
+          test -n "$KAFKA_USERNAME" || { echo "Kafka SASL username is required. Add KAFKA_USERNAME or KAFKA_EXTERNAL_USER"; exit 1; }
+          test -n "$KAFKA_PASSWORD" || { echo "Kafka SASL password is required. Add KAFKA_PASSWORD or KAFKA_EXTERNAL_PASSWORD"; exit 1; }
+          case ",$KAFKA_BROKERS," in
+            *,127.0.0.1:*|*,localhost:*|*,0.0.0.0:*|*,[::1]:*)
+              echo "KAFKA_BROKERS must be a public IP/domain endpoint, not a loopback address"
+              exit 1
+              ;;
+          esac
+
+      - name: Resolve Go modules and checksums
+        env:
+          GOPROXY: https://proxy.golang.org,direct
+        run: |
+          go mod download all
+          go mod verify
+
+      - name: Build active Polymarket crawler commands
+        env:
+          GOPROXY: https://proxy.golang.org,direct
+        run: |
+          go build -mod=mod ./cmd/polymarket-ingest ./cmd/polymarket-refresh
+
+      - name: Refresh recent Polymarket history and publish Kafka events
+        env:
+          KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS }}
+          KAFKA_USERNAME: ${{ secrets.KAFKA_USERNAME || secrets.KAFKA_EXTERNAL_USER }}
+          KAFKA_PASSWORD: ${{ secrets.KAFKA_PASSWORD || secrets.KAFKA_EXTERNAL_PASSWORD }}
+        run: |
+          go run -mod=mod ./cmd/polymarket-refresh
+
+      - name: Save crawler state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .statground_state
+          key: polymarket-crawler-state-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
