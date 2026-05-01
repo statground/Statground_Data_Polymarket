@@ -1,7 +1,6 @@
 package polymarket
 
 import (
-	"context"
 	"encoding/json"
 	"time"
 )
@@ -13,7 +12,7 @@ var baseInsertColumns = map[string][]string{
 		"active", "archived", "closed", "restricted",
 		"start_date_utc", "end_date_utc", "closed_time_utc", "creation_date_utc",
 		"series_slug", "series_ids", "market_ids",
-		"icon_url", "image_url", "volume",
+		"icon_url", "image_url", "volume", "raw_json",
 	},
 	"markets": {
 		"market_id", "raw_key", "collected_at_utc", "created_at_utc", "updated_at_utc",
@@ -23,7 +22,7 @@ var baseInsertColumns = map[string][]string{
 		"start_date_utc", "end_date_utc", "closed_time_utc",
 		"best_ask", "best_bid", "last_trade_price", "spread", "volume",
 		"outcomes", "outcome_prices", "clob_token_ids",
-		"series_slug", "series_ids", "event_ids",
+		"series_slug", "series_ids", "event_ids", "raw_json",
 	},
 	"series": {
 		"series_id", "raw_key", "collected_at_utc", "created_at_utc", "updated_at_utc",
@@ -31,15 +30,11 @@ var baseInsertColumns = map[string][]string{
 		"active", "archived", "closed",
 		"recurrence", "series_type",
 		"liquidity", "volume", "volume_24h",
-		"event_ids",
+		"event_ids", "raw_json",
 	},
 }
 
-func BuildEntityRow(ctx context.Context, ch *ClickHouseClient, entity string, obj map[string]any, collectedAt timeWrapper, rawKey string) (map[string]any, error) {
-	rawJSON, hasRawJSON, err := ch.PrepareRawJSONValue(ctx, entity, obj)
-	if err != nil {
-		return nil, err
-	}
+func BuildEntityRow(entity string, obj map[string]any, collectedAt timeWrapper, rawKey string) (map[string]any, error) {
 	var row map[string]any
 	switch entity {
 	case "events":
@@ -54,9 +49,7 @@ func BuildEntityRow(ctx context.Context, ch *ClickHouseClient, entity string, ob
 	if row == nil {
 		return nil, nil
 	}
-	if hasRawJSON {
-		row["raw_json"] = rawJSON
-	}
+	row["raw_json"] = StringifyJSON(obj)
 	return row, nil
 }
 

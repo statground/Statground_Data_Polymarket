@@ -11,25 +11,18 @@ type Ingestor struct {
 	cfg   *Config
 	api   *HTTPJSONClient
 	state StateStore
-	click *ClickHouseClient
 }
 
 type FetchResult struct {
 	TotalWritten  int
 	NewCheckpoint string
-	Client        *ClickHouseClient
 }
 
 func NewIngestor(cfg *Config) (*Ingestor, error) {
-	ch, err := NewClickHouseClient(cfg)
-	if err != nil {
-		return nil, err
-	}
 	return &Ingestor{
 		cfg:   cfg,
-		api:   NewHTTPJSONClient(cfg.RequestTimeout, cfg.CHConnectTimeout, "statground-polymarket-crawler"),
+		api:   NewHTTPJSONClient(cfg.RequestTimeout, cfg.ConnectTimeout, "statground-polymarket-crawler"),
 		state: NewStateStore(cfg),
-		click: ch,
 	}, nil
 }
 
@@ -54,20 +47,19 @@ func (i *Ingestor) PickOrder(ctx context.Context, entity string) (string, error)
 	return "", fmt.Errorf("failed to fetch %s: API returned non-list for both orders", entity)
 }
 
-func (i *Ingestor) FetchAndInsert(ctx context.Context, entity string, checkpoint map[string]string, ch *ClickHouseClient) (FetchResult, error) {
+func (i *Ingestor) FetchAndPublish(ctx context.Context, entity string, checkpoint map[string]string) (FetchResult, error) {
 	lastCP := checkpoint[entity]
 	bestSeen := lastCP
 
 	orderUsed, err := i.PickOrder(ctx, entity)
 	if err != nil {
-		return FetchResult{Client: ch}, err
+		return FetchResult{}, err
 	}
 	fmt.Printf("[FETCH] %s order=%s checkpoint=%s\n", entity, orderUsed, defaultDisplay(lastCP, "(none)"))
 
 	totalWritten := 0
 	rows := make([]map[string]any, 0, i.cfg.InsertBatchSizeForEntity(entity))
 	url := i.cfg.Endpoint(entity)
-	current := ch
 
 	for page := 0; page < i.cfg.MaxPages; page++ {
 		offset := page * i.cfg.PageLimit
@@ -96,11 +88,11 @@ func (i *Ingestor) FetchAndInsert(ctx context.Context, entity string, checkpoint
 			}
 			rawKey, err := UUIDv7()
 			if err != nil {
-				return FetchResult{Client: current}, err
+				return FetchResult{}, err
 			}
-			row, err := BuildEntityRow(ctx, current, entity, NormalizeRawJSON(obj), collectedAt, rawKey)
+			row, err := BuildEntityRow(entity, NormalizeRawJSON(obj), collectedAt, rawKey)
 			if err != nil {
-				return FetchResult{Client: current}, err
+				return FetchResult{}, err
 			}
 			if row != nil {
 				rows = append(rows, row)
@@ -109,12 +101,11 @@ func (i *Ingestor) FetchAndInsert(ctx context.Context, entity string, checkpoint
 			bestSeen = MaxTimeISO(bestSeen, updated)
 		}
 
-		current, err = current.FlushEntityRows(ctx, entity, &rows, false)
-		if err != nil {
-			return FetchResult{Client: current}, err
+		if err := i.FlushEntityRows(ctx, entity, &rows, false); err != nil {
+			return FetchResult{}, err
 		}
 
-		fmt.Printf("[%s] page=%d offset=%d inserted=%d http_status=%d\n", entity, page+1, offset, totalWritten, meta.HTTPStatus)
+		fmt.Printf("[%s] page=%d offset=%d published=%d http_status=%d\n", entity, page+1, offset, totalWritten, meta.HTTPStatus)
 		if stop {
 			fmt.Printf("[%s] reached checkpoint -> stop\n", entity)
 			break
@@ -123,24 +114,15 @@ func (i *Ingestor) FetchAndInsert(ctx context.Context, entity string, checkpoint
 			break
 		}
 		if err := SleepContext(ctx, i.cfg.BaseSleep); err != nil {
-			return FetchResult{Client: current}, err
+			return FetchResult{}, err
 		}
 	}
 
-	current, err = current.FlushEntityRows(ctx, entity, &rows, true)
-	if err != nil {
-		return FetchResult{Client: current}, err
+	if err := i.FlushEntityRows(ctx, entity, &rows, true); err != nil {
+		return FetchResult{}, err
 	}
 
-	return FetchResult{TotalWritten: totalWritten, NewCheckpoint: bestSeen, Client: current}, nil
-}
-
-func (i *Ingestor) OptimizeAfterBatch(ctx context.Context, ch *ClickHouseClient) {
-	ch.OptimizeRandomPartitions(ctx, []string{
-		i.cfg.EntityQualifiedTable("events"),
-		i.cfg.EntityQualifiedTable("markets"),
-		i.cfg.EntityQualifiedTable("series"),
-	})
+	return FetchResult{TotalWritten: totalWritten, NewCheckpoint: bestSeen}, nil
 }
 
 func RunIngest() error {
@@ -156,18 +138,20 @@ func RunIngest() error {
 		return err
 	}
 
-	fmt.Printf("[CONFIG] insert_batch_size_default=%d insert_batch_size_events=%d insert_batch_size_markets=%d insert_batch_size_series=%d insert_split_after_attempt=%d insert_min_split_batch_rows=%d max_partitions_per_insert_block=%d throw_on_max_partitions_per_insert_block=%d\n",
+	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d\n",
+		cfg.IngestMode,
+		cfg.KafkaTopic,
 		cfg.InsertBatchSize,
 		cfg.InsertBatchSizeForEntity("events"),
 		cfg.InsertBatchSizeForEntity("markets"),
 		cfg.InsertBatchSizeForEntity("series"),
-		cfg.InsertSplitAfterAttempt,
-		cfg.InsertMinSplitBatchRows,
-		cfg.InsertMaxPartitionsPerBlock,
-		boolToInt(cfg.InsertThrowOnMaxPartitionsPerBlock),
+		cfg.KafkaBatchSize,
 	)
 
 	ctx := context.Background()
+	if err := ingestor.ValidateKafkaIngest(ctx); err != nil {
+		return err
+	}
 	checkpoint, err := ingestor.state.LoadCheckpoint(ctx)
 	if err != nil {
 		return err
@@ -177,14 +161,12 @@ func RunIngest() error {
 		newCheckpoint = map[string]string{}
 	}
 
-	current := ingestor.click
 	wroteTotal := 0
 	for _, entity := range []string{"events", "markets", "series"} {
-		res, err := ingestor.FetchAndInsert(ctx, entity, checkpoint, current)
+		res, err := ingestor.FetchAndPublish(ctx, entity, checkpoint)
 		if err != nil {
 			return err
 		}
-		current = res.Client
 		wroteTotal += res.TotalWritten
 		if res.NewCheckpoint != "" {
 			newCheckpoint[entity] = res.NewCheckpoint
@@ -194,16 +176,8 @@ func RunIngest() error {
 	if err := ingestor.state.SaveCheckpoint(ctx, newCheckpoint); err != nil {
 		return err
 	}
-	ingestor.OptimizeAfterBatch(ctx, current)
-	fmt.Printf("\nDONE. inserted_objects=%d\n", wroteTotal)
+	fmt.Printf("\nDONE. published_objects=%d\n", wroteTotal)
 	return nil
-}
-
-func boolToInt(v bool) int {
-	if v {
-		return 1
-	}
-	return 0
 }
 
 func defaultDisplay(v, fallback string) string {

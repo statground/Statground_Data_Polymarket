@@ -2,44 +2,30 @@ package polymarket
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"time"
 )
 
 type RefreshEntityReport struct {
-	Mode            string `json:"mode"`
-	InsertedObjects int    `json:"inserted_objects"`
-
-	MaxUpdatedAtUTC string `json:"max_updated_at_utc,omitempty"`
-	RefreshUntilUTC string `json:"refresh_until_utc,omitempty"`
+	Mode             string `json:"mode"`
+	PublishedObjects int    `json:"published_objects"`
+	RefreshUntilUTC  string `json:"refresh_until_utc,omitempty"`
 }
 
 type RefreshReport struct {
-	RunAtUTC             string                         `json:"run_at_utc"`
-	LookbackHours        int                            `json:"lookback_hours"`
-	Entities             map[string]RefreshEntityReport `json:"entities"`
-	InsertedObjectsTotal int                            `json:"inserted_objects_total"`
+	RunAtUTC              string                         `json:"run_at_utc"`
+	LookbackHours         int                            `json:"lookback_hours"`
+	Entities              map[string]RefreshEntityReport `json:"entities"`
+	PublishedObjectsTotal int                            `json:"published_objects_total"`
 }
 
-func maxUpdatedAt(ctx context.Context, cfg *Config, ch *ClickHouseClient, entity string) (*time.Time, error) {
-	sql := fmt.Sprintf("SELECT max(ifNull(updated_at_utc, collected_at_utc)) AS mx FROM %s", cfg.EntityQualifiedTable(entity))
-	row, err := ch.QueryOneRow(ctx, sql)
-	if err != nil {
-		return nil, err
-	}
-	return ParseClickHouseTime(row["mx"]), nil
-}
-
-func fetchRefreshWindow(ctx context.Context, ingestor *Ingestor, entity string, ch *ClickHouseClient, refreshUntilISO string) (int, *ClickHouseClient, error) {
+func fetchRefreshWindow(ctx context.Context, ingestor *Ingestor, entity string, refreshUntilISO string) (int, error) {
 	orderUsed, err := ingestor.PickOrder(ctx, entity)
 	if err != nil {
-		return 0, ch, err
+		return 0, err
 	}
 	totalWritten := 0
 	rows := make([]map[string]any, 0, ingestor.cfg.InsertBatchSizeForEntity(entity))
-	current := ch
 	url := ingestor.cfg.Endpoint(entity)
 
 	for page := 0; page < ingestor.cfg.MaxPages; page++ {
@@ -69,22 +55,21 @@ func fetchRefreshWindow(ctx context.Context, ingestor *Ingestor, entity string, 
 			}
 			rawKey, err := UUIDv7()
 			if err != nil {
-				return totalWritten, current, err
+				return totalWritten, err
 			}
-			row, err := BuildEntityRow(ctx, current, entity, NormalizeRawJSON(obj), collectedAt, rawKey)
+			row, err := BuildEntityRow(entity, NormalizeRawJSON(obj), collectedAt, rawKey)
 			if err != nil {
-				return totalWritten, current, err
+				return totalWritten, err
 			}
 			if row != nil {
 				rows = append(rows, row)
 				totalWritten++
 			}
 		}
-		current, err = current.FlushEntityRows(ctx, entity, &rows, false)
-		if err != nil {
-			return totalWritten, current, err
+		if err := ingestor.FlushEntityRows(ctx, entity, &rows, false); err != nil {
+			return totalWritten, err
 		}
-		fmt.Printf("[%s] page=%d offset=%d inserted=%d http_status=%d\n", entity, page+1, offset, totalWritten, meta.HTTPStatus)
+		fmt.Printf("[%s] page=%d offset=%d published=%d http_status=%d\n", entity, page+1, offset, totalWritten, meta.HTTPStatus)
 		if stop {
 			break
 		}
@@ -92,15 +77,14 @@ func fetchRefreshWindow(ctx context.Context, ingestor *Ingestor, entity string, 
 			break
 		}
 		if err := SleepContext(ctx, ingestor.cfg.BaseSleep); err != nil {
-			return totalWritten, current, err
+			return totalWritten, err
 		}
 	}
 
-	current, err = current.FlushEntityRows(ctx, entity, &rows, true)
-	if err != nil {
-		return totalWritten, current, err
+	if err := ingestor.FlushEntityRows(ctx, entity, &rows, true); err != nil {
+		return totalWritten, err
 	}
-	return totalWritten, current, nil
+	return totalWritten, nil
 }
 
 func RunRefresh() error {
@@ -116,89 +100,45 @@ func RunRefresh() error {
 		return err
 	}
 
-	fmt.Printf("[CONFIG] insert_batch_size_default=%d insert_batch_size_events=%d insert_batch_size_markets=%d insert_batch_size_series=%d insert_split_after_attempt=%d insert_min_split_batch_rows=%d\n",
+	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s lookback_hours=%d batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d\n",
+		cfg.IngestMode,
+		cfg.KafkaTopic,
+		cfg.LookbackHours,
 		cfg.InsertBatchSize,
 		cfg.InsertBatchSizeForEntity("events"),
 		cfg.InsertBatchSizeForEntity("markets"),
 		cfg.InsertBatchSizeForEntity("series"),
-		cfg.InsertSplitAfterAttempt,
-		cfg.InsertMinSplitBatchRows,
+		cfg.KafkaBatchSize,
 	)
 
 	ctx := context.Background()
+	if err := ingestor.ValidateKafkaIngest(ctx); err != nil {
+		return err
+	}
 	report := RefreshReport{
 		RunAtUTC:      FormatISO8601UTC(UTCNow()),
 		LookbackHours: cfg.LookbackHours,
 		Entities:      make(map[string]RefreshEntityReport),
 	}
 
-	current := ingestor.click
+	refreshUntil := UTCNow().Add(-time.Duration(cfg.LookbackHours) * time.Hour)
+	refreshUntilISO := FormatISO8601UTC(refreshUntil)
 	wroteTotal := 0
 	for _, entity := range []string{"events", "markets", "series"} {
-		mx, err := maxUpdatedAt(ctx, cfg, current, entity)
+		fmt.Printf("[REFRESH] %s: refresh_until=%s\n", entity, refreshUntilISO)
+		wrote, err := fetchRefreshWindow(ctx, ingestor, entity, refreshUntilISO)
 		if err != nil {
 			return err
 		}
-		if mx == nil {
-			fmt.Printf("[INFO] %s: no max(updated_at_utc). Falling back to incremental ingestion.\n", entity)
-			checkpoint, err := ingestor.state.LoadCheckpoint(ctx)
-			if err != nil {
-				return err
-			}
-			res, err := ingestor.FetchAndInsert(ctx, entity, checkpoint, current)
-			if err != nil {
-				return err
-			}
-			current = res.Client
-			wroteTotal += res.TotalWritten
-			if res.NewCheckpoint != "" {
-				checkpoint[entity] = res.NewCheckpoint
-				if err := ingestor.state.SaveCheckpoint(ctx, checkpoint); err != nil {
-					return err
-				}
-			}
-			report.Entities[entity] = RefreshEntityReport{
-				Mode:            "fallback_incremental",
-				InsertedObjects: res.TotalWritten,
-			}
-			continue
-		}
-
-		refreshUntil := mx.Add(-time.Duration(cfg.LookbackHours) * time.Hour)
-		refreshUntilISO := FormatISO8601UTC(refreshUntil)
-		fmt.Printf("[REFRESH] %s: max_updated_at_utc=%s refresh_until=%s\n", entity, FormatISO8601UTC(*mx), refreshUntilISO)
-		wrote, next, err := fetchRefreshWindow(ctx, ingestor, entity, current, refreshUntilISO)
-		if err != nil {
-			return err
-		}
-		current = next
 		wroteTotal += wrote
 		report.Entities[entity] = RefreshEntityReport{
-			Mode:            "lookback_refresh",
-			InsertedObjects: wrote,
-			MaxUpdatedAtUTC: FormatISO8601UTC(*mx),
-			RefreshUntilUTC: refreshUntilISO,
+			Mode:             "lookback_refresh_without_clickhouse_read",
+			PublishedObjects: wrote,
+			RefreshUntilUTC:  refreshUntilISO,
 		}
 	}
+	report.PublishedObjectsTotal = wroteTotal
 
-	ingestor.OptimizeAfterBatch(ctx, current)
-	report.InsertedObjectsTotal = wroteTotal
-
-	if cfg.RefreshReportPath != "" {
-		path := cfg.RefreshReportPath
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(cfg.RepoRoot, path)
-		}
-		payload, err := json.MarshalIndent(report, "", "  ")
-		if err != nil {
-			return err
-		}
-		if err := WriteFileAtomic(path, payload); err != nil {
-			return err
-		}
-		fmt.Printf("[REPORT] wrote refresh report -> %s\n", path)
-	}
-
-	fmt.Printf("\nDONE. inserted_objects_total=%d\n", wroteTotal)
+	fmt.Printf("\nDONE. published_objects_total=%d\n", wroteTotal)
 	return nil
 }

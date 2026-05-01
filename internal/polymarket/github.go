@@ -29,7 +29,7 @@ type LocalFileStateStore struct {
 }
 
 func NewStateStore(cfg *Config) StateStore {
-	if strings.TrimSpace(cfg.GHToken) != "" {
+	if strings.EqualFold(strings.TrimSpace(cfg.StateBackend), "github") && strings.TrimSpace(cfg.GHToken) != "" {
 		return &GitHubStateStore{
 			cfg:    cfg,
 			client: NewHTTPJSONClient(30*time.Second, 10*time.Second, "statground-polymarket-state"),
