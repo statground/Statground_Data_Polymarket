@@ -41,11 +41,12 @@ func fetchRefreshWindow(ctx context.Context, ingestor *Ingestor, entity string, 
 
 	result := refreshWindowResult{OrderUsed: orderUsed, StopReason: "max_pages"}
 	rows := make([]map[string]any, 0, ingestor.cfg.InsertBatchSizeForEntity(entity))
-	url := ingestor.cfg.Endpoint(entity)
 	canStopByLookback := stringsEqualFold(orderUsed, "updatedAt") || stringsEqualFold(orderUsed, "updated_at")
 	if !canStopByLookback {
 		fmt.Printf("[WARN] %s order=%s is not updatedAt; lookback cutoff will not be used for early stop. max_pages=%d bounds this run.\n", entity, orderUsed, ingestor.cfg.MaxPages)
 	}
+	useKeyset := ingestor.cfg.UseKeysetPagination && supportsKeysetPagination(entity)
+	cursor := ""
 
 	for page := 0; page < ingestor.cfg.MaxPages; page++ {
 		if refreshSoftDeadlineReached(stopAt) {
@@ -57,19 +58,17 @@ func fetchRefreshWindow(ctx context.Context, ingestor *Ingestor, entity string, 
 			break
 		}
 
-		offset := page * ingestor.cfg.PageLimit
-		data, meta, err := ingestor.api.SafeGetJSON(ctx, url, map[string]string{
-			"limit":     fmt.Sprint(ingestor.cfg.PageLimit),
-			"offset":    fmt.Sprint(offset),
-			"order":     orderUsed,
-			"ascending": "false",
-		}, ingestor.cfg.MaxRetries, ingestor.cfg.BaseSleep)
+		pageData, err := ingestor.FetchEntityPage(ctx, entity, orderUsed, page, cursor)
 		if err != nil {
-			fmt.Printf("[STOP] %s fetch failed at offset=%d err=%v\n", entity, offset, err)
+			if useKeyset {
+				fmt.Printf("[STOP] %s fetch failed at cursor=%s err=%v\n", entity, shortCursor(cursor), err)
+			} else {
+				fmt.Printf("[STOP] %s fetch failed at offset=%d err=%v\n", entity, page*ingestor.cfg.PageLimitForEntity(entity), err)
+			}
 			result.StopReason = "fetch_error"
 			break
 		}
-		items := ExtractItems(data, entity)
+		items := pageData.Items
 		if len(items) == 0 {
 			result.StopReason = "empty_page"
 			break
@@ -116,15 +115,27 @@ func fetchRefreshWindow(ctx context.Context, ingestor *Ingestor, entity string, 
 		if err := ingestor.FlushEntityRows(ctx, entity, &rows, false); err != nil {
 			return result, err
 		}
-		fmt.Printf("[%s] page=%d offset=%d published=%d http_status=%d page_newest=%s page_oldest=%s\n",
-			entity, page+1, offset, result.PublishedObjects, meta.HTTPStatus, defaultDisplay(pageNewest, "(unknown)"), defaultDisplay(pageOldest, "(unknown)"))
+		if useKeyset {
+			fmt.Printf("[%s] page=%d cursor=%s next_cursor=%s published=%d http_status=%d page_newest=%s page_oldest=%s\n",
+				entity, page+1, shortCursor(pageData.CursorIn), shortCursor(pageData.NextCursor), result.PublishedObjects, pageData.Meta.HTTPStatus, defaultDisplay(pageNewest, "(unknown)"), defaultDisplay(pageOldest, "(unknown)"))
+		} else {
+			fmt.Printf("[%s] page=%d offset=%d published=%d http_status=%d page_newest=%s page_oldest=%s\n",
+				entity, page+1, pageData.Offset, result.PublishedObjects, pageData.Meta.HTTPStatus, defaultDisplay(pageNewest, "(unknown)"), defaultDisplay(pageOldest, "(unknown)"))
+		}
 
 		if stopByLookback || stopByMaxObjects {
 			break
 		}
-		if len(items) < ingestor.cfg.PageLimit {
+		if len(items) < ingestor.cfg.PageLimitForEntity(entity) {
 			result.StopReason = "last_page"
 			break
+		}
+		if useKeyset {
+			if pageData.NextCursor == "" {
+				result.StopReason = "last_page_no_cursor"
+				break
+			}
+			cursor = pageData.NextCursor
 		}
 		if refreshSoftDeadlineReached(stopAt) {
 			result.StopReason = "soft_deadline"
@@ -154,7 +165,7 @@ func RunRefresh() error {
 		return err
 	}
 
-	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s entities=%s max_pages=%d lookback_hours=%d refresh_max_objects_per_entity=%d run_soft_deadline_seconds=%.0f batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d kafka_write_chunk_size=%d kafka_batch_bytes=%d kafka_max_message_bytes=%d kafka_max_array_items=%d\n",
+	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s entities=%s max_pages=%d lookback_hours=%d refresh_max_objects_per_entity=%d run_soft_deadline_seconds=%.0f use_keyset_pagination=%t batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d kafka_write_chunk_size=%d kafka_batch_bytes=%d kafka_max_message_bytes=%d kafka_max_array_items=%d\n",
 		cfg.IngestMode,
 		cfg.KafkaTopic,
 		joinCSV(cfg.Entities),
@@ -162,6 +173,7 @@ func RunRefresh() error {
 		cfg.LookbackHours,
 		cfg.RefreshMaxObjectsPerEntity,
 		cfg.RunSoftDeadline.Seconds(),
+		cfg.UseKeysetPagination,
 		cfg.InsertBatchSize,
 		cfg.InsertBatchSizeForEntity("events"),
 		cfg.InsertBatchSizeForEntity("markets"),

@@ -157,34 +157,60 @@ func (i *Ingestor) publishKafkaEvents(ctx context.Context, events []predictionKa
 			Time:  UTCNow(),
 		})
 		if len(messages) >= chunkSize {
-			if err := writeKafkaMessagesBounded(ctx, w, messages); err != nil {
+			if err := writeKafkaMessagesBounded(ctx, w, messages, i.cfg.KafkaWriteTimeout, i.cfg.MaxRetries, i.cfg.BaseSleep); err != nil {
 				return err
 			}
 			messages = messages[:0]
 		}
 	}
-	return writeKafkaMessagesBounded(ctx, w, messages)
+	return writeKafkaMessagesBounded(ctx, w, messages, i.cfg.KafkaWriteTimeout, i.cfg.MaxRetries, i.cfg.BaseSleep)
 }
 
-func writeKafkaMessagesBounded(ctx context.Context, w *kafka.Writer, messages []kafka.Message) error {
+func writeKafkaMessagesBounded(ctx context.Context, w *kafka.Writer, messages []kafka.Message, writeTimeout time.Duration, maxRetries int, baseSleep time.Duration) error {
 	if len(messages) == 0 {
 		return nil
 	}
-	err := w.WriteMessages(ctx, messages...)
+	err := writeKafkaMessagesWithRetry(ctx, w, messages, writeTimeout, maxRetries, baseSleep)
 	if err == nil {
 		return nil
 	}
 	if len(messages) > 1 && isKafkaMessageSizeTooLarge(err) {
 		mid := len(messages) / 2
-		if err := writeKafkaMessagesBounded(ctx, w, messages[:mid]); err != nil {
+		if err := writeKafkaMessagesBounded(ctx, w, messages[:mid], writeTimeout, maxRetries, baseSleep); err != nil {
 			return err
 		}
-		return writeKafkaMessagesBounded(ctx, w, messages[mid:])
+		return writeKafkaMessagesBounded(ctx, w, messages[mid:], writeTimeout, maxRetries, baseSleep)
 	}
 	if len(messages) == 1 && isKafkaMessageSizeTooLarge(err) {
 		return fmt.Errorf("kafka message too large after shrink key=%s value_bytes=%d: %w", string(messages[0].Key), len(messages[0].Value), err)
 	}
 	return err
+}
+
+func writeKafkaMessagesWithRetry(ctx context.Context, w *kafka.Writer, messages []kafka.Message, writeTimeout time.Duration, maxRetries int, baseSleep time.Duration) error {
+	var lastErr error
+	for attempt := 1; attempt <= maxInt(1, maxRetries); attempt++ {
+		writeCtx := ctx
+		cancel := func() {}
+		if writeTimeout > 0 {
+			writeCtx, cancel = context.WithTimeout(ctx, writeTimeout+5*time.Second)
+		}
+		err := w.WriteMessages(writeCtx, messages...)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if isKafkaMessageSizeTooLarge(err) || ctx.Err() != nil || attempt >= maxInt(1, maxRetries) {
+			return err
+		}
+		sleepFor := RetryBackoff(baseSleep, attempt)
+		fmt.Printf("[kafka retry] messages=%d attempt=%d/%d sleep=%s err=%v\n", len(messages), attempt, maxInt(1, maxRetries), sleepFor, err)
+		if err := SleepContext(ctx, sleepFor); err != nil {
+			return err
+		}
+	}
+	return lastErr
 }
 
 func isKafkaMessageSizeTooLarge(err error) bool {

@@ -11,6 +11,10 @@ on:
         description: "Optional MAX_PAGES override for this run."
         required: false
         default: ""
+      max_objects_per_entity:
+        description: "Optional INGEST_MAX_OBJECTS_PER_ENTITY override for this run. 0 disables this cap."
+        required: false
+        default: ""
   schedule:
     - cron: "0 * * * *"
 
@@ -39,11 +43,14 @@ jobs:
       ENTITIES: ${{ github.event.inputs.entities || vars.POLYMARKET_ENTITIES || 'events,markets,series' }}
       MAX_PAGES_NO_CHECKPOINT: ${{ vars.POLYMARKET_MAX_PAGES_NO_CHECKPOINT || '20' }}
       MAX_PAGES: ${{ github.event.inputs.max_pages || vars.POLYMARKET_MAX_PAGES || '50' }}
+      INGEST_MAX_OBJECTS_PER_ENTITY: ${{ github.event.inputs.max_objects_per_entity || vars.POLYMARKET_INGEST_MAX_OBJECTS_PER_ENTITY || '2000' }}
+      RUN_SOFT_DEADLINE_SECONDS: ${{ vars.POLYMARKET_INGEST_SOFT_DEADLINE_SECONDS || '1200' }}
+      USE_KEYSET_PAGINATION: ${{ vars.POLYMARKET_USE_KEYSET_PAGINATION || 'true' }}
       BATCH_SIZE: ${{ vars.POLYMARKET_BATCH_SIZE || vars.POLYMARKET_INSERT_BATCH_SIZE || '500' }}
       BATCH_SIZE_SERIES: ${{ vars.POLYMARKET_BATCH_SIZE_SERIES || vars.POLYMARKET_INSERT_BATCH_SIZE_SERIES || '50' }}
-      KAFKA_BATCH_SIZE: ${{ vars.POLYMARKET_KAFKA_BATCH_SIZE || '1' }}
-      KAFKA_WRITE_CHUNK_SIZE: ${{ vars.POLYMARKET_KAFKA_WRITE_CHUNK_SIZE || '1' }}
-      KAFKA_BATCH_BYTES: ${{ vars.POLYMARKET_KAFKA_BATCH_BYTES || '262144' }}
+      KAFKA_BATCH_SIZE: ${{ vars.POLYMARKET_KAFKA_BATCH_SIZE || '50' }}
+      KAFKA_WRITE_CHUNK_SIZE: ${{ vars.POLYMARKET_KAFKA_WRITE_CHUNK_SIZE || '50' }}
+      KAFKA_BATCH_BYTES: ${{ vars.POLYMARKET_KAFKA_BATCH_BYTES || '1048576' }}
       KAFKA_MAX_ARRAY_ITEMS: ${{ vars.POLYMARKET_KAFKA_MAX_ARRAY_ITEMS || '512' }}
       KAFKA_MAX_MESSAGE_BYTES: ${{ vars.POLYMARKET_KAFKA_MAX_MESSAGE_BYTES || '524288' }}
       KAFKA_BATCH_TIMEOUT: ${{ vars.POLYMARKET_KAFKA_BATCH_TIMEOUT || '0.5' }}

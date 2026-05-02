@@ -11,6 +11,10 @@ on:
         description: "Optional MAX_PAGES override for this run. Default uses POLYMARKET_REFRESH_MAX_PAGES or 50."
         required: false
         default: ""
+      max_objects_per_entity:
+        description: "Optional REFRESH_MAX_OBJECTS_PER_ENTITY override for this run. 0 disables this cap."
+        required: false
+        default: ""
   schedule:
     - cron: "20 */6 * * *"
 
@@ -41,7 +45,8 @@ jobs:
       MAX_PAGES: ${{ github.event.inputs.max_pages || vars.POLYMARKET_REFRESH_MAX_PAGES || '50' }}
       LOOKBACK_HOURS: ${{ vars.POLYMARKET_LOOKBACK_HOURS || '72' }}
       RUN_SOFT_DEADLINE_SECONDS: ${{ vars.POLYMARKET_REFRESH_SOFT_DEADLINE_SECONDS || '3300' }}
-      REFRESH_MAX_OBJECTS_PER_ENTITY: ${{ vars.POLYMARKET_REFRESH_MAX_OBJECTS_PER_ENTITY || '0' }}
+      REFRESH_MAX_OBJECTS_PER_ENTITY: ${{ github.event.inputs.max_objects_per_entity || vars.POLYMARKET_REFRESH_MAX_OBJECTS_PER_ENTITY || '2000' }}
+      USE_KEYSET_PAGINATION: ${{ vars.POLYMARKET_USE_KEYSET_PAGINATION || 'true' }}
       BATCH_SIZE: ${{ vars.POLYMARKET_BATCH_SIZE || vars.POLYMARKET_INSERT_BATCH_SIZE || '500' }}
       BATCH_SIZE_SERIES: ${{ vars.POLYMARKET_BATCH_SIZE_SERIES || vars.POLYMARKET_INSERT_BATCH_SIZE_SERIES || '50' }}
       KAFKA_BATCH_SIZE: ${{ vars.POLYMARKET_KAFKA_BATCH_SIZE || '50' }}

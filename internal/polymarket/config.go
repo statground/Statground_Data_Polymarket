@@ -10,17 +10,19 @@ import (
 )
 
 type Config struct {
-	PolyBase             string
-	PageLimit            int
-	MaxPages             int
-	MaxPagesNoCheckpoint int
-	Entities             []string
-	OrderPrimary         string
-	OrderFallback        string
-	RequestTimeout       time.Duration
-	ConnectTimeout       time.Duration
-	MaxRetries           int
-	BaseSleep            time.Duration
+	PolyBase                  string
+	PageLimit                 int
+	MaxPages                  int
+	MaxPagesNoCheckpoint      int
+	IngestMaxObjectsPerEntity int
+	UseKeysetPagination       bool
+	Entities                  []string
+	OrderPrimary              string
+	OrderFallback             string
+	RequestTimeout            time.Duration
+	ConnectTimeout            time.Duration
+	MaxRetries                int
+	BaseSleep                 time.Duration
 
 	InsertBatchSize        int
 	InsertBatchSizeEvents  int
@@ -65,17 +67,19 @@ func LoadConfig() (*Config, error) {
 
 	batchSize := envInt("BATCH_SIZE", envInt("INSERT_BATCH_SIZE", 1000))
 	cfg := &Config{
-		PolyBase:             strings.TrimRight(envString("POLY_BASE", "https://gamma-api.polymarket.com"), "/"),
-		PageLimit:            maxInt(1, envInt("PAGE_LIMIT", 100)),
-		MaxPages:             maxInt(1, envInt("MAX_PAGES", 50)),
-		MaxPagesNoCheckpoint: envInt("MAX_PAGES_NO_CHECKPOINT", 20),
-		Entities:             normalizePolymarketEntities(splitCSV(envString("ENTITIES", "events,markets,series"))),
-		OrderPrimary:         envString("ORDER_PRIMARY", "updatedAt"),
-		OrderFallback:        envString("ORDER_FALLBACK", "id"),
-		RequestTimeout:       time.Duration(maxInt(1, envInt("REQUEST_TIMEOUT", 30))) * time.Second,
-		ConnectTimeout:       time.Duration(maxInt(1, envInt("CONNECT_TIMEOUT", envInt("CH_CONNECT_TIMEOUT", 10)))) * time.Second,
-		MaxRetries:           maxInt(1, envInt("MAX_RETRIES", 6)),
-		BaseSleep:            envFloatDuration("BASE_SLEEP", 0.2),
+		PolyBase:                  strings.TrimRight(envString("POLY_BASE", "https://gamma-api.polymarket.com"), "/"),
+		PageLimit:                 maxInt(1, envInt("PAGE_LIMIT", 100)),
+		MaxPages:                  maxInt(1, envInt("MAX_PAGES", 50)),
+		MaxPagesNoCheckpoint:      envInt("MAX_PAGES_NO_CHECKPOINT", 20),
+		IngestMaxObjectsPerEntity: maxInt(0, envInt("INGEST_MAX_OBJECTS_PER_ENTITY", envInt("MAX_OBJECTS_PER_ENTITY", 0))),
+		UseKeysetPagination:       envBool("USE_KEYSET_PAGINATION", true),
+		Entities:                  normalizePolymarketEntities(splitCSV(envString("ENTITIES", "events,markets,series"))),
+		OrderPrimary:              envString("ORDER_PRIMARY", "updatedAt"),
+		OrderFallback:             envString("ORDER_FALLBACK", "id"),
+		RequestTimeout:            time.Duration(maxInt(1, envInt("REQUEST_TIMEOUT", 30))) * time.Second,
+		ConnectTimeout:            time.Duration(maxInt(1, envInt("CONNECT_TIMEOUT", envInt("CH_CONNECT_TIMEOUT", 10)))) * time.Second,
+		MaxRetries:                maxInt(1, envInt("MAX_RETRIES", 6)),
+		BaseSleep:                 envFloatDuration("BASE_SLEEP", 0.2),
 
 		InsertBatchSize:        maxInt(1, batchSize),
 		InsertBatchSizeEvents:  maxInt(1, envInt("BATCH_SIZE_EVENTS", envInt("INSERT_BATCH_SIZE_EVENTS", batchSize))),
@@ -220,6 +224,21 @@ func envFloatDuration(key string, defaultSeconds float64) time.Duration {
 		return 0
 	}
 	return time.Duration(seconds * float64(time.Second))
+}
+
+func envBool(key string, defaultValue bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	if v == "" {
+		return defaultValue
+	}
+	switch v {
+	case "1", "true", "yes", "y", "on":
+		return true
+	case "0", "false", "no", "n", "off":
+		return false
+	default:
+		return defaultValue
+	}
 }
 
 func firstNonEmpty(values ...string) string {
