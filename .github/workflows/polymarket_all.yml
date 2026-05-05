@@ -1,34 +1,42 @@
-name: Polymarket - Refresh recent history to Kafka
+name: Polymarket - Ingest and Refresh to Kafka
 
 on:
   workflow_dispatch:
     inputs:
       entities:
-        description: "Comma-separated entity list."
+        description: "Comma-separated entity list. Use series to resume only failed series after a partial run."
         required: false
         default: "events,markets,series"
-      max_pages:
-        description: "Optional MAX_PAGES override for this run. Default uses POLYMARKET_REFRESH_MAX_PAGES or 50."
+      ingest_max_pages:
+        description: "Optional ingest MAX_PAGES override."
         required: false
         default: ""
-      max_objects_per_entity:
-        description: "Optional REFRESH_MAX_OBJECTS_PER_ENTITY override for this run. 0 disables this cap."
+      refresh_max_pages:
+        description: "Optional refresh MAX_PAGES override."
+        required: false
+        default: ""
+      ingest_max_objects_per_entity:
+        description: "Optional INGEST_MAX_OBJECTS_PER_ENTITY override. 0 disables this cap."
+        required: false
+        default: ""
+      refresh_max_objects_per_entity:
+        description: "Optional REFRESH_MAX_OBJECTS_PER_ENTITY override. 0 disables this cap."
         required: false
         default: ""
   schedule:
-    - cron: "20 */6 * * *"
+    - cron: "43 2-23/4 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: polymarket-refresh-history
+  group: polymarket-all
   cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     env:
       STATE_BACKEND: local
@@ -37,15 +45,10 @@ jobs:
       POLY_BASE: https://gamma-api.polymarket.com
       INGEST_MODE: kafka
       KAFKA_TOPIC: prediction.events
-      KAFKA_CLIENT_ID: statground-polymarket-refresh-history
       PRODUCER_SOURCE: github_actions
       PRODUCER_IP: "::"
       ENTITIES: ${{ github.event.inputs.entities || vars.POLYMARKET_ENTITIES || 'events,markets,series' }}
       MAX_PAGES_NO_CHECKPOINT: ${{ vars.POLYMARKET_MAX_PAGES_NO_CHECKPOINT || '20' }}
-      MAX_PAGES: ${{ github.event.inputs.max_pages || vars.POLYMARKET_REFRESH_MAX_PAGES || '50' }}
-      LOOKBACK_HOURS: ${{ vars.POLYMARKET_LOOKBACK_HOURS || '72' }}
-      RUN_SOFT_DEADLINE_SECONDS: ${{ vars.POLYMARKET_REFRESH_SOFT_DEADLINE_SECONDS || '3300' }}
-      REFRESH_MAX_OBJECTS_PER_ENTITY: ${{ github.event.inputs.max_objects_per_entity || vars.POLYMARKET_REFRESH_MAX_OBJECTS_PER_ENTITY || '2000' }}
       USE_KEYSET_PAGINATION: ${{ vars.POLYMARKET_USE_KEYSET_PAGINATION || 'true' }}
       BATCH_SIZE: ${{ vars.POLYMARKET_BATCH_SIZE || vars.POLYMARKET_INSERT_BATCH_SIZE || '500' }}
       BATCH_SIZE_SERIES: ${{ vars.POLYMARKET_BATCH_SIZE_SERIES || vars.POLYMARKET_INSERT_BATCH_SIZE_SERIES || '50' }}
@@ -55,7 +58,6 @@ jobs:
       KAFKA_MAX_ARRAY_ITEMS: ${{ vars.POLYMARKET_KAFKA_MAX_ARRAY_ITEMS || '512' }}
       KAFKA_MAX_MESSAGE_BYTES: ${{ vars.POLYMARKET_KAFKA_MAX_MESSAGE_BYTES || '524288' }}
       KAFKA_BATCH_TIMEOUT: ${{ vars.POLYMARKET_KAFKA_BATCH_TIMEOUT || '0.5' }}
-      KAFKA_WRITE_TIMEOUT_SECONDS: ${{ vars.POLYMARKET_KAFKA_WRITE_TIMEOUT_SECONDS || '30' }}
       REQUEST_TIMEOUT: ${{ vars.POLYMARKET_REQUEST_TIMEOUT || '30' }}
       CONNECT_TIMEOUT: ${{ vars.POLYMARKET_CONNECT_TIMEOUT || '10' }}
       MAX_RETRIES: ${{ vars.POLYMARKET_MAX_RETRIES || '6' }}
@@ -109,11 +111,29 @@ jobs:
         run: |
           go build -mod=mod ./cmd/polymarket-ingest ./cmd/polymarket-refresh
 
+      - name: Ingest new Polymarket objects and publish Kafka events
+        env:
+          KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS }}
+          KAFKA_USERNAME: ${{ secrets.KAFKA_USERNAME || secrets.KAFKA_EXTERNAL_USER }}
+          KAFKA_PASSWORD: ${{ secrets.KAFKA_PASSWORD || secrets.KAFKA_EXTERNAL_PASSWORD }}
+          KAFKA_CLIENT_ID: statground-polymarket-ingest-new
+          MAX_PAGES: ${{ github.event.inputs.ingest_max_pages || vars.POLYMARKET_MAX_PAGES || '50' }}
+          INGEST_MAX_OBJECTS_PER_ENTITY: ${{ github.event.inputs.ingest_max_objects_per_entity || vars.POLYMARKET_INGEST_MAX_OBJECTS_PER_ENTITY || '2000' }}
+          RUN_SOFT_DEADLINE_SECONDS: ${{ vars.POLYMARKET_INGEST_SOFT_DEADLINE_SECONDS || '1200' }}
+        run: |
+          go run -mod=mod ./cmd/polymarket-ingest
+
       - name: Refresh recent Polymarket history and publish Kafka events
         env:
           KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS }}
           KAFKA_USERNAME: ${{ secrets.KAFKA_USERNAME || secrets.KAFKA_EXTERNAL_USER }}
           KAFKA_PASSWORD: ${{ secrets.KAFKA_PASSWORD || secrets.KAFKA_EXTERNAL_PASSWORD }}
+          KAFKA_CLIENT_ID: statground-polymarket-refresh-history
+          MAX_PAGES: ${{ github.event.inputs.refresh_max_pages || vars.POLYMARKET_REFRESH_MAX_PAGES || '50' }}
+          LOOKBACK_HOURS: ${{ vars.POLYMARKET_LOOKBACK_HOURS || '72' }}
+          RUN_SOFT_DEADLINE_SECONDS: ${{ vars.POLYMARKET_REFRESH_SOFT_DEADLINE_SECONDS || '3300' }}
+          REFRESH_MAX_OBJECTS_PER_ENTITY: ${{ github.event.inputs.refresh_max_objects_per_entity || vars.POLYMARKET_REFRESH_MAX_OBJECTS_PER_ENTITY || '2000' }}
+          KAFKA_WRITE_TIMEOUT_SECONDS: ${{ vars.POLYMARKET_KAFKA_WRITE_TIMEOUT_SECONDS || '30' }}
         run: |
           go run -mod=mod ./cmd/polymarket-refresh
 
