@@ -84,9 +84,9 @@ jobs:
 
       - name: Validate required Kafka secrets
         env:
-          KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS }}
-          KAFKA_USERNAME: ${{ secrets.KAFKA_USERNAME || secrets.KAFKA_EXTERNAL_USER }}
-          KAFKA_PASSWORD: ${{ secrets.KAFKA_PASSWORD || secrets.KAFKA_EXTERNAL_PASSWORD }}
+          KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS2 || secrets.KAFKA_BROKERS }}
+          KAFKA_USERNAME: ${{ secrets.KAFKA_USERNAME2 || secrets.KAFKA_USERNAME || secrets.KAFKA_EXTERNAL_USER }}
+          KAFKA_PASSWORD: ${{ secrets.KAFKA_PASSWORD2 || secrets.KAFKA_PASSWORD || secrets.KAFKA_EXTERNAL_PASSWORD }}
         run: |
           test -n "$KAFKA_BROKERS" || { echo "KAFKA_BROKERS secret is required"; exit 1; }
           test -n "$KAFKA_USERNAME" || { echo "Kafka SASL username is required. Add KAFKA_USERNAME or KAFKA_EXTERNAL_USER"; exit 1; }
@@ -113,9 +113,9 @@ jobs:
 
       - name: Ingest new Polymarket objects and publish Kafka events
         env:
-          KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS }}
-          KAFKA_USERNAME: ${{ secrets.KAFKA_USERNAME || secrets.KAFKA_EXTERNAL_USER }}
-          KAFKA_PASSWORD: ${{ secrets.KAFKA_PASSWORD || secrets.KAFKA_EXTERNAL_PASSWORD }}
+          KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS2 || secrets.KAFKA_BROKERS }}
+          KAFKA_USERNAME: ${{ secrets.KAFKA_USERNAME2 || secrets.KAFKA_USERNAME || secrets.KAFKA_EXTERNAL_USER }}
+          KAFKA_PASSWORD: ${{ secrets.KAFKA_PASSWORD2 || secrets.KAFKA_PASSWORD || secrets.KAFKA_EXTERNAL_PASSWORD }}
           KAFKA_CLIENT_ID: statground-polymarket-ingest-new
           MAX_PAGES: ${{ github.event.inputs.ingest_max_pages || vars.POLYMARKET_MAX_PAGES || '50' }}
           INGEST_MAX_OBJECTS_PER_ENTITY: ${{ github.event.inputs.ingest_max_objects_per_entity || vars.POLYMARKET_INGEST_MAX_OBJECTS_PER_ENTITY || '2000' }}
@@ -125,9 +125,9 @@ jobs:
 
       - name: Refresh recent Polymarket history and publish Kafka events
         env:
-          KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS }}
-          KAFKA_USERNAME: ${{ secrets.KAFKA_USERNAME || secrets.KAFKA_EXTERNAL_USER }}
-          KAFKA_PASSWORD: ${{ secrets.KAFKA_PASSWORD || secrets.KAFKA_EXTERNAL_PASSWORD }}
+          KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS2 || secrets.KAFKA_BROKERS }}
+          KAFKA_USERNAME: ${{ secrets.KAFKA_USERNAME2 || secrets.KAFKA_USERNAME || secrets.KAFKA_EXTERNAL_USER }}
+          KAFKA_PASSWORD: ${{ secrets.KAFKA_PASSWORD2 || secrets.KAFKA_PASSWORD || secrets.KAFKA_EXTERNAL_PASSWORD }}
           KAFKA_CLIENT_ID: statground-polymarket-refresh-history
           MAX_PAGES: ${{ github.event.inputs.refresh_max_pages || vars.POLYMARKET_REFRESH_MAX_PAGES || '50' }}
           LOOKBACK_HOURS: ${{ vars.POLYMARKET_LOOKBACK_HOURS || '72' }}
