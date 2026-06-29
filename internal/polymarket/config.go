@@ -29,21 +29,25 @@ type Config struct {
 	InsertBatchSizeMarkets int
 	InsertBatchSizeSeries  int
 
-	IngestMode           string
-	KafkaBrokers         []string
-	KafkaUsername        string
-	KafkaPassword        string
-	KafkaTopic           string
-	KafkaClientID        string
-	KafkaBatchSize       int
-	KafkaBatchBytes      int
-	KafkaBatchTimeout    time.Duration
-	KafkaWriteTimeout    time.Duration
-	KafkaWriteChunkSize  int
-	KafkaMaxMessageBytes int
-	KafkaMaxArrayItems   int
-	ProducerSource       string
-	ProducerIP           string
+	IngestMode              string
+	KafkaBrokers            []string
+	KafkaUsername           string
+	KafkaPassword           string
+	KafkaTopic              string
+	KafkaClientID           string
+	KafkaBatchSize          int
+	KafkaBatchBytes         int
+	KafkaBatchTimeout       time.Duration
+	KafkaWriteTimeout       time.Duration
+	KafkaWriteChunkSize     int
+	KafkaWriterMaxAttempts int
+	KafkaPartitionFallback bool
+	KafkaFallbackPartitions []int
+	KafkaFallbackTimeout    time.Duration
+	KafkaMaxMessageBytes    int
+	KafkaMaxArrayItems      int
+	ProducerSource          string
+	ProducerIP              string
 
 	Org              string
 	OrchestratorRepo string
@@ -86,21 +90,25 @@ func LoadConfig() (*Config, error) {
 		InsertBatchSizeMarkets: maxInt(1, envInt("BATCH_SIZE_MARKETS", envInt("INSERT_BATCH_SIZE_MARKETS", batchSize))),
 		InsertBatchSizeSeries:  maxInt(1, envInt("BATCH_SIZE_SERIES", envInt("INSERT_BATCH_SIZE_SERIES", minInt(batchSize, 50)))),
 
-		IngestMode:           strings.ToLower(envString("INGEST_MODE", "kafka")),
-		KafkaBrokers:         splitCSV(envString("KAFKA_BROKERS", "")),
-		KafkaUsername:        firstNonEmpty(os.Getenv("KAFKA_USERNAME"), os.Getenv("KAFKA_EXTERNAL_USER")),
-		KafkaPassword:        firstNonEmpty(os.Getenv("KAFKA_PASSWORD"), os.Getenv("KAFKA_EXTERNAL_PASSWORD")),
-		KafkaTopic:           envString("KAFKA_TOPIC", "prediction.events"),
-		KafkaClientID:        envString("KAFKA_CLIENT_ID", "statground-polymarket-crawler"),
-		KafkaBatchSize:       maxInt(1, envInt("KAFKA_BATCH_SIZE", 1)),
-		KafkaBatchBytes:      maxInt(65536, envInt("KAFKA_BATCH_BYTES", 262144)),
-		KafkaBatchTimeout:    envFloatDuration("KAFKA_BATCH_TIMEOUT", 0.5),
-		KafkaWriteTimeout:    time.Duration(maxInt(1, envInt("KAFKA_WRITE_TIMEOUT", envInt("KAFKA_WRITE_TIMEOUT_SECONDS", 30)))) * time.Second,
-		KafkaWriteChunkSize:  maxInt(1, envInt("KAFKA_WRITE_CHUNK_SIZE", envInt("KAFKA_BATCH_SIZE", 1))),
-		KafkaMaxMessageBytes: maxInt(131072, envInt("KAFKA_MAX_MESSAGE_BYTES", 524288)),
-		KafkaMaxArrayItems:   maxInt(0, envInt("KAFKA_MAX_ARRAY_ITEMS", 512)),
-		ProducerSource:       envString("PRODUCER_SOURCE", "github_actions"),
-		ProducerIP:           envString("PRODUCER_IP", "::"),
+		IngestMode:              strings.ToLower(envString("INGEST_MODE", "kafka")),
+		KafkaBrokers:            splitCSV(envString("KAFKA_BROKERS", "")),
+		KafkaUsername:           firstNonEmpty(os.Getenv("KAFKA_USERNAME"), os.Getenv("KAFKA_EXTERNAL_USER")),
+		KafkaPassword:           firstNonEmpty(os.Getenv("KAFKA_PASSWORD"), os.Getenv("KAFKA_EXTERNAL_PASSWORD")),
+		KafkaTopic:              envString("KAFKA_TOPIC", "prediction.events"),
+		KafkaClientID:           envString("KAFKA_CLIENT_ID", "statground-polymarket-crawler"),
+		KafkaBatchSize:          maxInt(1, envInt("KAFKA_BATCH_SIZE", 1)),
+		KafkaBatchBytes:         maxInt(65536, envInt("KAFKA_BATCH_BYTES", 262144)),
+		KafkaBatchTimeout:       envFloatDuration("KAFKA_BATCH_TIMEOUT", 0.5),
+		KafkaWriteTimeout:       time.Duration(maxInt(1, envInt("KAFKA_WRITE_TIMEOUT", envInt("KAFKA_WRITE_TIMEOUT_SECONDS", 30)))) * time.Second,
+		KafkaWriteChunkSize:     maxInt(1, envInt("KAFKA_WRITE_CHUNK_SIZE", envInt("KAFKA_BATCH_SIZE", 1))),
+		KafkaWriterMaxAttempts: maxInt(1, envInt("KAFKA_WRITER_MAX_ATTEMPTS", 1)),
+		KafkaPartitionFallback: envBool("KAFKA_PARTITION_FALLBACK_ENABLED", true),
+		KafkaFallbackPartitions: splitIntCSV(envString("KAFKA_FALLBACK_PARTITIONS", "")),
+		KafkaFallbackTimeout:    envFloatDuration("KAFKA_PARTITION_FALLBACK_TIMEOUT_SECONDS", 8.0),
+		KafkaMaxMessageBytes:    maxInt(131072, envInt("KAFKA_MAX_MESSAGE_BYTES", 524288)),
+		KafkaMaxArrayItems:      maxInt(0, envInt("KAFKA_MAX_ARRAY_ITEMS", 512)),
+		ProducerSource:          envString("PRODUCER_SOURCE", "github_actions"),
+		ProducerIP:              envString("PRODUCER_IP", "::"),
 
 		Org:              envString("ORG", "statground"),
 		OrchestratorRepo: envString("ORCHESTRATOR_REPO", "Statground_Data_Polymarket"),
