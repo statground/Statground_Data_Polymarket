@@ -254,7 +254,7 @@ func PruneNestedPolymarketEntities(entity string, obj map[string]any) map[string
 	}
 
 	if len(prunedKeys) > 0 {
-		out["_statground_raw_json_policy"] = "nested_polymarket_entity_arrays_pruned_for_kafka_message_size"
+		out["_statground_raw_json_policy"] = "nested_polymarket_entity_arrays_pruned_for_snapshot_payload_size"
 		out["_statground_raw_json_entity"] = entity
 		out["_statground_raw_json_pruned_keys"] = prunedKeys
 	}

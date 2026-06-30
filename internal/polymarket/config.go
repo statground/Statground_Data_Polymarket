@@ -29,6 +29,16 @@ type Config struct {
 	InsertBatchSizeMarkets int
 	InsertBatchSizeSeries  int
 
+	ClickHouseHTTPURL     string
+	ClickHouseProtocol    string
+	ClickHouseHost        string
+	ClickHousePort        string
+	ClickHouseHTTPURLPath string
+	ClickHouseUser        string
+	ClickHousePassword    string
+	ClickHouseDatabase    string
+	ClickHouseTimeout     time.Duration
+
 	IngestMode              string
 	KafkaBrokers            []string
 	KafkaUsername           string
@@ -90,7 +100,17 @@ func LoadConfig() (*Config, error) {
 		InsertBatchSizeMarkets: maxInt(1, envInt("BATCH_SIZE_MARKETS", envInt("INSERT_BATCH_SIZE_MARKETS", batchSize))),
 		InsertBatchSizeSeries:  maxInt(1, envInt("BATCH_SIZE_SERIES", envInt("INSERT_BATCH_SIZE_SERIES", minInt(batchSize, 50)))),
 
-		IngestMode:              strings.ToLower(envString("INGEST_MODE", "kafka")),
+		ClickHouseHTTPURL:     firstNonEmpty(os.Getenv("CH_HTTP_URL"), os.Getenv("CLICKHOUSE_HTTP_URL")),
+		ClickHouseProtocol:    envString("CH_PROTOCOL", envString("CLICKHOUSE_PROTOCOL", "http")),
+		ClickHouseHost:        firstNonEmpty(os.Getenv("CH_HOST"), os.Getenv("CLICKHOUSE_HOST")),
+		ClickHousePort:        envString("CH_PORT", envString("CLICKHOUSE_PORT", "8123")),
+		ClickHouseHTTPURLPath: firstNonEmpty(os.Getenv("CH_HTTP_URL_PATH"), os.Getenv("CLICKHOUSE_HTTP_URL_PATH")),
+		ClickHouseUser:        firstNonEmpty(os.Getenv("CH_USER"), os.Getenv("CLICKHOUSE_USER")),
+		ClickHousePassword:    firstNonEmpty(os.Getenv("CH_PASSWORD"), os.Getenv("CLICKHOUSE_PASSWORD")),
+		ClickHouseDatabase:    envString("CH_DATABASE", envString("CLICKHOUSE_DATABASE", "Data_Prediction_Polymarket_Raw")),
+		ClickHouseTimeout:     time.Duration(maxInt(1, envInt("CH_REQUEST_TIMEOUT", envInt("CLICKHOUSE_REQUEST_TIMEOUT", 120)))) * time.Second,
+
+		IngestMode:              strings.ToLower(envString("INGEST_MODE", "clickhouse")),
 		KafkaBrokers:            splitCSV(envString("KAFKA_BROKERS", "")),
 		KafkaUsername:           firstNonEmpty(os.Getenv("KAFKA_USERNAME"), os.Getenv("KAFKA_EXTERNAL_USER")),
 		KafkaPassword:           firstNonEmpty(os.Getenv("KAFKA_PASSWORD"), os.Getenv("KAFKA_EXTERNAL_PASSWORD")),
@@ -125,22 +145,39 @@ func LoadConfig() (*Config, error) {
 	}
 
 	switch strings.ToLower(strings.TrimSpace(cfg.IngestMode)) {
+	case "clickhouse", "direct", "db", "database", "ch":
+		cfg.IngestMode = "clickhouse"
 	case "kafka", "kafka_clickhouse", "kafka-clickhouse", "event", "events":
 		cfg.IngestMode = "kafka"
 	default:
-		return nil, fmt.Errorf("unsupported INGEST_MODE=%q; Statground Polymarket crawler now supports Kafka ingestion only", cfg.IngestMode)
+		return nil, fmt.Errorf("unsupported INGEST_MODE=%q; supported modes: clickhouse, kafka", cfg.IngestMode)
 	}
-	if len(cfg.KafkaBrokers) == 0 {
-		return nil, fmt.Errorf("missing required env: KAFKA_BROKERS")
-	}
-	if strings.TrimSpace(cfg.KafkaTopic) == "" {
-		return nil, fmt.Errorf("missing required env: KAFKA_TOPIC")
+	if cfg.IngestMode == "kafka" {
+		if len(cfg.KafkaBrokers) == 0 {
+			return nil, fmt.Errorf("missing required env: KAFKA_BROKERS")
+		}
+		if strings.TrimSpace(cfg.KafkaTopic) == "" {
+			return nil, fmt.Errorf("missing required env: KAFKA_TOPIC")
+		}
 	}
 	if len(cfg.Entities) == 0 {
 		return nil, fmt.Errorf("ENTITIES must contain at least one of: events, markets, series")
 	}
 
 	return cfg, nil
+}
+
+func (c *Config) UsesClickHouseIngest() bool {
+	return strings.EqualFold(strings.TrimSpace(c.IngestMode), "clickhouse")
+}
+
+func (c *Config) UsesKafkaIngest() bool {
+	return strings.EqualFold(strings.TrimSpace(c.IngestMode), "kafka")
+}
+
+func (c *Config) UsesClickHouseState() bool {
+	stateBackend := strings.ToLower(strings.TrimSpace(c.StateBackend))
+	return stateBackend == "clickhouse" || stateBackend == "ch" || stateBackend == "db" || stateBackend == "database"
 }
 
 func normalizePolymarketEntities(values []string) []string {

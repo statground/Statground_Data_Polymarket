@@ -1,4 +1,4 @@
-name: Polymarket - Ingest and Refresh to Kafka
+name: Polymarket - Ingest and Refresh to ClickHouse
 
 on:
   workflow_dispatch:
@@ -39,12 +39,9 @@ jobs:
     timeout-minutes: 90
 
     env:
-      STATE_BACKEND: local
-      STATE_DIR: .statground_state
-      CHECKPOINT_PATH: .statground_state/polymarket_checkpoint.json
+      STATE_BACKEND: clickhouse
       POLY_BASE: https://gamma-api.polymarket.com
-      INGEST_MODE: kafka
-      KAFKA_TOPIC: prediction.events
+      INGEST_MODE: clickhouse
       PRODUCER_SOURCE: github_actions
       PRODUCER_IP: "::"
       ENTITIES: ${{ github.event.inputs.entities || vars.POLYMARKET_ENTITIES || 'events,markets,series' }}
@@ -52,15 +49,8 @@ jobs:
       USE_KEYSET_PAGINATION: ${{ vars.POLYMARKET_USE_KEYSET_PAGINATION || 'true' }}
       BATCH_SIZE: ${{ vars.POLYMARKET_BATCH_SIZE || vars.POLYMARKET_INSERT_BATCH_SIZE || '500' }}
       BATCH_SIZE_SERIES: ${{ vars.POLYMARKET_BATCH_SIZE_SERIES || vars.POLYMARKET_INSERT_BATCH_SIZE_SERIES || '50' }}
-      KAFKA_BATCH_SIZE: ${{ vars.POLYMARKET_KAFKA_BATCH_SIZE || '50' }}
-      KAFKA_WRITE_CHUNK_SIZE: ${{ vars.POLYMARKET_KAFKA_WRITE_CHUNK_SIZE || '50' }}
-      KAFKA_BATCH_BYTES: ${{ vars.POLYMARKET_KAFKA_BATCH_BYTES || '1048576' }}
-      KAFKA_MAX_ARRAY_ITEMS: ${{ vars.POLYMARKET_KAFKA_MAX_ARRAY_ITEMS || '512' }}
-      KAFKA_MAX_MESSAGE_BYTES: ${{ vars.POLYMARKET_KAFKA_MAX_MESSAGE_BYTES || '524288' }}
-      KAFKA_BATCH_TIMEOUT: ${{ vars.POLYMARKET_KAFKA_BATCH_TIMEOUT || '0.5' }}
-      KAFKA_WRITER_MAX_ATTEMPTS: ${{ vars.POLYMARKET_KAFKA_WRITER_MAX_ATTEMPTS || '1' }}
-      KAFKA_PARTITION_FALLBACK_ENABLED: ${{ vars.POLYMARKET_KAFKA_PARTITION_FALLBACK_ENABLED || 'true' }}
-      KAFKA_PARTITION_FALLBACK_TIMEOUT_SECONDS: ${{ vars.POLYMARKET_KAFKA_PARTITION_FALLBACK_TIMEOUT_SECONDS || '8.0' }}
+      CH_DATABASE: Data_Prediction_Polymarket_Raw
+      CH_REQUEST_TIMEOUT: ${{ vars.POLYMARKET_CH_REQUEST_TIMEOUT || '120' }}
       REQUEST_TIMEOUT: ${{ vars.POLYMARKET_REQUEST_TIMEOUT || '30' }}
       CONNECT_TIMEOUT: ${{ vars.POLYMARKET_CONNECT_TIMEOUT || '10' }}
       MAX_RETRIES: ${{ vars.POLYMARKET_MAX_RETRIES || '6' }}
@@ -70,49 +60,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Restore crawler state
-        uses: actions/cache/restore@v4
-        with:
-          path: .statground_state
-          key: polymarket-crawler-state-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            polymarket-crawler-state-${{ github.ref_name }}-
-            polymarket-crawler-state-
-
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Validate required Kafka secrets
+      - name: Validate required ClickHouse secrets
         env:
-          KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS2 || secrets.KAFKA_BROKERS }}
-          KAFKA_USERNAME: ${{ secrets.KAFKA_USERNAME2 || secrets.KAFKA_USERNAME || secrets.KAFKA_EXTERNAL_USER }}
-          KAFKA_PASSWORD: ${{ secrets.KAFKA_PASSWORD2 || secrets.KAFKA_PASSWORD || secrets.KAFKA_EXTERNAL_PASSWORD }}
+          CH_HOST: ${{ secrets.CH_HOST || secrets.CLICKHOUSE_HOST }}
+          CH_PORT: ${{ secrets.CH_PORT || secrets.CLICKHOUSE_PORT }}
+          CH_USER: ${{ secrets.CH_USER || secrets.CLICKHOUSE_USER }}
+          CH_PASSWORD: ${{ secrets.CH_PASSWORD || secrets.CLICKHOUSE_PASSWORD }}
+          CH_PROTOCOL: ${{ secrets.CLICKHOUSE_PROTOCOL || secrets.CH_PROTOCOL || 'http' }}
+          CH_HTTP_URL_PATH: ${{ secrets.CLICKHOUSE_HTTP_URL_PATH || secrets.CH_HTTP_URL_PATH }}
         run: |
-          test -n "$KAFKA_BROKERS" || { echo "KAFKA_BROKERS secret is required"; exit 1; }
-          test -n "$KAFKA_USERNAME" || { echo "Kafka SASL username is required. Add KAFKA_USERNAME or KAFKA_EXTERNAL_USER"; exit 1; }
-          test -n "$KAFKA_PASSWORD" || { echo "Kafka SASL password is required. Add KAFKA_PASSWORD or KAFKA_EXTERNAL_PASSWORD"; exit 1; }
+          test -n "$CH_HOST" || { echo "CH_HOST or CLICKHOUSE_HOST secret is required"; exit 1; }
+          test -n "$CH_USER" || { echo "CH_USER or CLICKHOUSE_USER secret is required"; exit 1; }
+          test -n "$CH_PASSWORD" || { echo "CH_PASSWORD or CLICKHOUSE_PASSWORD secret is required"; exit 1; }
           python3 - <<'PY'
           import hashlib
           import os
 
-          brokers = os.environ.get("KAFKA_BROKERS", "")
-          safe = brokers.replace(".", "[.]").replace(":", "[:]").replace(",", ", ")
-          print(f"KAFKA_BROKERS_SANITIZED={safe}")
-          print(f"KAFKA_BROKERS_SHA256={hashlib.sha256(brokers.encode()).hexdigest()}")
+          endpoint = f"{os.environ.get('CH_PROTOCOL', 'http')}://{os.environ.get('CH_HOST', '')}:{os.environ.get('CH_PORT') or '8123'}"
+          safe = endpoint.replace(".", "[.]").replace(":", "[:]")
+          print(f"CLICKHOUSE_ENDPOINT_SANITIZED={safe}")
+          print(f"CLICKHOUSE_ENDPOINT_SHA256={hashlib.sha256(endpoint.encode()).hexdigest()}")
           PY
-          case ",$KAFKA_BROKERS," in
-            *,180.66.240.243:50004,*)
-              echo "KAFKA_BROKERS still contains old broker endpoint 180.66.240.243:50004"
-              exit 1
-              ;;
-            *,127.0.0.1:*|*,localhost:*|*,0.0.0.0:*|*,[::1]:*)
-              echo "KAFKA_BROKERS must be a public IP/domain endpoint, not a loopback address"
-              exit 1
-              ;;
-          esac
 
       - name: Resolve Go modules and checksums
         env:
@@ -127,29 +101,32 @@ jobs:
         run: |
           go build -mod=mod ./cmd/polymarket-ingest ./cmd/polymarket-refresh
 
-      - name: Ingest new Polymarket objects and publish Kafka events
+      - name: Ingest new Polymarket objects into ClickHouse
         env:
-          KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS2 || secrets.KAFKA_BROKERS }}
-          KAFKA_USERNAME: ${{ secrets.KAFKA_USERNAME2 || secrets.KAFKA_USERNAME || secrets.KAFKA_EXTERNAL_USER }}
-          KAFKA_PASSWORD: ${{ secrets.KAFKA_PASSWORD2 || secrets.KAFKA_PASSWORD || secrets.KAFKA_EXTERNAL_PASSWORD }}
-          KAFKA_CLIENT_ID: statground-polymarket-ingest-new
+          CH_HOST: ${{ secrets.CH_HOST || secrets.CLICKHOUSE_HOST }}
+          CH_PORT: ${{ secrets.CH_PORT || secrets.CLICKHOUSE_PORT }}
+          CH_USER: ${{ secrets.CH_USER || secrets.CLICKHOUSE_USER }}
+          CH_PASSWORD: ${{ secrets.CH_PASSWORD || secrets.CLICKHOUSE_PASSWORD }}
+          CH_PROTOCOL: ${{ secrets.CLICKHOUSE_PROTOCOL || secrets.CH_PROTOCOL || 'http' }}
+          CH_HTTP_URL_PATH: ${{ secrets.CLICKHOUSE_HTTP_URL_PATH || secrets.CH_HTTP_URL_PATH }}
           MAX_PAGES: ${{ github.event.inputs.ingest_max_pages || vars.POLYMARKET_MAX_PAGES || '50' }}
           INGEST_MAX_OBJECTS_PER_ENTITY: ${{ github.event.inputs.ingest_max_objects_per_entity || vars.POLYMARKET_INGEST_MAX_OBJECTS_PER_ENTITY || '2000' }}
           RUN_SOFT_DEADLINE_SECONDS: ${{ vars.POLYMARKET_INGEST_SOFT_DEADLINE_SECONDS || '1200' }}
         run: |
           go run -mod=mod ./cmd/polymarket-ingest
 
-      - name: Refresh recent Polymarket history and publish Kafka events
+      - name: Refresh recent Polymarket history into ClickHouse
         env:
-          KAFKA_BROKERS: ${{ secrets.KAFKA_BROKERS2 || secrets.KAFKA_BROKERS }}
-          KAFKA_USERNAME: ${{ secrets.KAFKA_USERNAME2 || secrets.KAFKA_USERNAME || secrets.KAFKA_EXTERNAL_USER }}
-          KAFKA_PASSWORD: ${{ secrets.KAFKA_PASSWORD2 || secrets.KAFKA_PASSWORD || secrets.KAFKA_EXTERNAL_PASSWORD }}
-          KAFKA_CLIENT_ID: statground-polymarket-refresh-history
+          CH_HOST: ${{ secrets.CH_HOST || secrets.CLICKHOUSE_HOST }}
+          CH_PORT: ${{ secrets.CH_PORT || secrets.CLICKHOUSE_PORT }}
+          CH_USER: ${{ secrets.CH_USER || secrets.CLICKHOUSE_USER }}
+          CH_PASSWORD: ${{ secrets.CH_PASSWORD || secrets.CLICKHOUSE_PASSWORD }}
+          CH_PROTOCOL: ${{ secrets.CLICKHOUSE_PROTOCOL || secrets.CH_PROTOCOL || 'http' }}
+          CH_HTTP_URL_PATH: ${{ secrets.CLICKHOUSE_HTTP_URL_PATH || secrets.CH_HTTP_URL_PATH }}
           MAX_PAGES: ${{ github.event.inputs.refresh_max_pages || vars.POLYMARKET_REFRESH_MAX_PAGES || '50' }}
           LOOKBACK_HOURS: ${{ vars.POLYMARKET_LOOKBACK_HOURS || '72' }}
           RUN_SOFT_DEADLINE_SECONDS: ${{ vars.POLYMARKET_REFRESH_SOFT_DEADLINE_SECONDS || '3300' }}
           REFRESH_MAX_OBJECTS_PER_ENTITY: ${{ github.event.inputs.refresh_max_objects_per_entity || vars.POLYMARKET_REFRESH_MAX_OBJECTS_PER_ENTITY || '2000' }}
-          KAFKA_WRITE_TIMEOUT_SECONDS: ${{ vars.POLYMARKET_KAFKA_WRITE_TIMEOUT_SECONDS || '30' }}
         run: |
           go run -mod=mod ./cmd/polymarket-refresh
 
@@ -171,10 +148,3 @@ jobs:
           CH_BASE_URL="${CH_PROTOCOL}://${CH_HOST}:${CH_PORT}/${CH_HTTP_URL_PATH}"
           curl --fail --silent --show-error --max-time 300 -u "$CH_USER:$CH_PASSWORD" "$CH_BASE_URL" --data-binary "SYSTEM REFRESH VIEW mirtype_content.mv_provider_practice_content_refresh"
           curl --fail --silent --show-error --max-time 60 -u "$CH_USER:$CH_PASSWORD" "$CH_BASE_URL" --data-binary "SELECT * FROM mirtype_content.v_provider_practice_content_current FORMAT TSVWithNames"
-
-      - name: Save crawler state
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: .statground_state
-          key: polymarket-crawler-state-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}

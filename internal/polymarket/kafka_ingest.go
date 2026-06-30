@@ -900,6 +900,12 @@ func (i *Ingestor) FlushEntityRows(ctx context.Context, entity string, buffer *[
 		}
 		batch := append([]map[string]any(nil), (*buffer)[:take]...)
 		*buffer = (*buffer)[take:]
+		if i.cfg.UsesClickHouseIngest() {
+			if err := i.InsertEntityRowsClickHouse(ctx, entity, batch); err != nil {
+				return err
+			}
+			continue
+		}
 		events := make([]predictionKafkaEvent, 0, len(batch))
 		for _, row := range batch {
 			ev, err := i.rowEvent(entity, row)

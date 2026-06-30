@@ -8,7 +8,7 @@ import (
 
 type RefreshEntityReport struct {
 	Mode             string `json:"mode"`
-	PublishedObjects int    `json:"published_objects"`
+	WrittenObjects   int    `json:"written_objects"`
 	RefreshUntilUTC  string `json:"refresh_until_utc,omitempty"`
 	OrderUsed        string `json:"order_used,omitempty"`
 	PagesRead        int    `json:"pages_read,omitempty"`
@@ -21,11 +21,11 @@ type RefreshReport struct {
 	RunAtUTC              string                         `json:"run_at_utc"`
 	LookbackHours         int                            `json:"lookback_hours"`
 	Entities              map[string]RefreshEntityReport `json:"entities"`
-	PublishedObjectsTotal int                            `json:"published_objects_total"`
+	WrittenObjectsTotal   int                            `json:"written_objects_total"`
 }
 
 type refreshWindowResult struct {
-	PublishedObjects int
+	WrittenObjects   int
 	OrderUsed        string
 	PagesRead        int
 	StopReason       string
@@ -53,7 +53,7 @@ func fetchRefreshWindow(ctx context.Context, ingestor *Ingestor, entity string, 
 			result.StopReason = "soft_deadline"
 			break
 		}
-		if ingestor.cfg.RefreshMaxObjectsPerEntity > 0 && result.PublishedObjects >= ingestor.cfg.RefreshMaxObjectsPerEntity {
+		if ingestor.cfg.RefreshMaxObjectsPerEntity > 0 && result.WrittenObjects >= ingestor.cfg.RefreshMaxObjectsPerEntity {
 			result.StopReason = "max_objects_per_entity"
 			break
 		}
@@ -93,7 +93,7 @@ func fetchRefreshWindow(ctx context.Context, ingestor *Ingestor, entity string, 
 				result.StopReason = "lookback_cutoff"
 				break
 			}
-			if ingestor.cfg.RefreshMaxObjectsPerEntity > 0 && result.PublishedObjects >= ingestor.cfg.RefreshMaxObjectsPerEntity {
+			if ingestor.cfg.RefreshMaxObjectsPerEntity > 0 && result.WrittenObjects >= ingestor.cfg.RefreshMaxObjectsPerEntity {
 				stopByMaxObjects = true
 				result.StopReason = "max_objects_per_entity"
 				break
@@ -109,18 +109,18 @@ func fetchRefreshWindow(ctx context.Context, ingestor *Ingestor, entity string, 
 			}
 			if row != nil {
 				rows = append(rows, row)
-				result.PublishedObjects++
+				result.WrittenObjects++
 			}
 		}
 		if err := ingestor.FlushEntityRows(ctx, entity, &rows, false); err != nil {
 			return result, err
 		}
 		if useKeyset {
-			fmt.Printf("[%s] page=%d cursor=%s next_cursor=%s published=%d http_status=%d page_newest=%s page_oldest=%s\n",
-				entity, page+1, shortCursor(pageData.CursorIn), shortCursor(pageData.NextCursor), result.PublishedObjects, pageData.Meta.HTTPStatus, defaultDisplay(pageNewest, "(unknown)"), defaultDisplay(pageOldest, "(unknown)"))
+			fmt.Printf("[%s] page=%d cursor=%s next_cursor=%s written=%d http_status=%d page_newest=%s page_oldest=%s\n",
+				entity, page+1, shortCursor(pageData.CursorIn), shortCursor(pageData.NextCursor), result.WrittenObjects, pageData.Meta.HTTPStatus, defaultDisplay(pageNewest, "(unknown)"), defaultDisplay(pageOldest, "(unknown)"))
 		} else {
-			fmt.Printf("[%s] page=%d offset=%d published=%d http_status=%d page_newest=%s page_oldest=%s\n",
-				entity, page+1, pageData.Offset, result.PublishedObjects, pageData.Meta.HTTPStatus, defaultDisplay(pageNewest, "(unknown)"), defaultDisplay(pageOldest, "(unknown)"))
+			fmt.Printf("[%s] page=%d offset=%d written=%d http_status=%d page_newest=%s page_oldest=%s\n",
+				entity, page+1, pageData.Offset, result.WrittenObjects, pageData.Meta.HTTPStatus, defaultDisplay(pageNewest, "(unknown)"), defaultDisplay(pageOldest, "(unknown)"))
 		}
 
 		if stopByLookback || stopByMaxObjects {
@@ -157,17 +157,20 @@ func RunRefresh() error {
 	if err != nil {
 		return err
 	}
-	if err := EnsureStatePath(cfg); err != nil {
-		return err
+	if !cfg.UsesClickHouseState() {
+		if err := EnsureStatePath(cfg); err != nil {
+			return err
+		}
 	}
 	ingestor, err := NewIngestor(cfg)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s entities=%s max_pages=%d lookback_hours=%d refresh_max_objects_per_entity=%d run_soft_deadline_seconds=%.0f use_keyset_pagination=%t batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d kafka_write_chunk_size=%d kafka_batch_bytes=%d kafka_max_message_bytes=%d kafka_max_array_items=%d\n",
+	fmt.Printf("[CONFIG] ingest_mode=%s clickhouse_database=%s state_backend=%s entities=%s max_pages=%d lookback_hours=%d refresh_max_objects_per_entity=%d run_soft_deadline_seconds=%.0f use_keyset_pagination=%t batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d\n",
 		cfg.IngestMode,
-		cfg.KafkaTopic,
+		cfg.ClickHouseDatabase,
+		cfg.StateBackend,
 		joinCSV(cfg.Entities),
 		cfg.MaxPages,
 		cfg.LookbackHours,
@@ -178,16 +181,17 @@ func RunRefresh() error {
 		cfg.InsertBatchSizeForEntity("events"),
 		cfg.InsertBatchSizeForEntity("markets"),
 		cfg.InsertBatchSizeForEntity("series"),
-		cfg.KafkaBatchSize,
-		cfg.KafkaWriteChunkSize,
-		cfg.KafkaBatchBytes,
-		cfg.KafkaMaxMessageBytes,
-		cfg.KafkaMaxArrayItems,
 	)
 
 	ctx := context.Background()
-	if err := ingestor.ValidateKafkaIngest(ctx); err != nil {
-		return err
+	if cfg.UsesClickHouseIngest() {
+		if err := ingestor.ValidateClickHouseIngest(ctx); err != nil {
+			return err
+		}
+	} else {
+		if err := ingestor.ValidateKafkaIngest(ctx); err != nil {
+			return err
+		}
 	}
 	report := RefreshReport{
 		RunAtUTC:      FormatISO8601UTC(UTCNow()),
@@ -209,7 +213,7 @@ func RunRefresh() error {
 		if refreshSoftDeadlineReached(stopAt) {
 			fmt.Printf("[STOP] soft deadline reached before entity=%s; remaining entities skipped cleanly.\n", entity)
 			report.Entities[entity] = RefreshEntityReport{
-				Mode:            "lookback_refresh_without_clickhouse_read",
+				Mode:            "lookback_refresh_clickhouse_direct",
 				RefreshUntilUTC: refreshUntilISO,
 				StopReason:      "soft_deadline_before_entity",
 			}
@@ -221,10 +225,10 @@ func RunRefresh() error {
 		if err != nil {
 			return err
 		}
-		wroteTotal += res.PublishedObjects
+		wroteTotal += res.WrittenObjects
 		report.Entities[entity] = RefreshEntityReport{
-			Mode:             "lookback_refresh_without_clickhouse_read",
-			PublishedObjects: res.PublishedObjects,
+			Mode:             "lookback_refresh_clickhouse_direct",
+			WrittenObjects:   res.WrittenObjects,
 			RefreshUntilUTC:  refreshUntilISO,
 			OrderUsed:        res.OrderUsed,
 			PagesRead:        res.PagesRead,
@@ -232,12 +236,12 @@ func RunRefresh() error {
 			NewestSeenUTC:    res.NewestSeenUTC,
 			OldestSeenUTC:    res.OldestSeenUTC,
 		}
-		fmt.Printf("[REFRESH-DONE] %s published=%d pages=%d stop_reason=%s newest_seen=%s oldest_seen=%s\n",
-			entity, res.PublishedObjects, res.PagesRead, res.StopReason, defaultDisplay(res.NewestSeenUTC, "(unknown)"), defaultDisplay(res.OldestSeenUTC, "(unknown)"))
+		fmt.Printf("[REFRESH-DONE] %s written=%d pages=%d stop_reason=%s newest_seen=%s oldest_seen=%s\n",
+			entity, res.WrittenObjects, res.PagesRead, res.StopReason, defaultDisplay(res.NewestSeenUTC, "(unknown)"), defaultDisplay(res.OldestSeenUTC, "(unknown)"))
 	}
-	report.PublishedObjectsTotal = wroteTotal
+	report.WrittenObjectsTotal = wroteTotal
 
-	fmt.Printf("\nDONE. published_objects_total=%d\n", wroteTotal)
+	fmt.Printf("\nDONE. written_objects_total=%d\n", wroteTotal)
 	return nil
 }
 

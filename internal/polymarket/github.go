@@ -29,6 +29,12 @@ type LocalFileStateStore struct {
 }
 
 func NewStateStore(cfg *Config) StateStore {
+	if cfg.UsesClickHouseState() {
+		return &ClickHouseStateStore{
+			cfg: cfg,
+			ch:  NewClickHouseClient(cfg),
+		}
+	}
 	if strings.EqualFold(strings.TrimSpace(cfg.StateBackend), "github") && strings.TrimSpace(cfg.GHToken) != "" {
 		return &GitHubStateStore{
 			cfg:    cfg,

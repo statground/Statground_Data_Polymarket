@@ -11,6 +11,7 @@ type Ingestor struct {
 	cfg   *Config
 	api   *HTTPJSONClient
 	state StateStore
+	ch    *ClickHouseClient
 }
 
 type FetchResult struct {
@@ -21,10 +22,15 @@ type FetchResult struct {
 }
 
 func NewIngestor(cfg *Config) (*Ingestor, error) {
+	var ch *ClickHouseClient
+	if cfg.UsesClickHouseIngest() || cfg.UsesClickHouseState() {
+		ch = NewClickHouseClient(cfg)
+	}
 	return &Ingestor{
 		cfg:   cfg,
 		api:   NewHTTPJSONClient(cfg.RequestTimeout, cfg.ConnectTimeout, "statground-polymarket-crawler"),
 		state: NewStateStore(cfg),
+		ch:    ch,
 	}, nil
 }
 
@@ -140,10 +146,10 @@ func (i *Ingestor) FetchAndPublish(ctx context.Context, entity string, checkpoin
 		}
 
 		if useKeyset {
-			fmt.Printf("[%s] page=%d cursor=%s next_cursor=%s published=%d http_status=%d\n",
+			fmt.Printf("[%s] page=%d cursor=%s next_cursor=%s written=%d http_status=%d\n",
 				entity, page+1, shortCursor(pageData.CursorIn), shortCursor(pageData.NextCursor), totalWritten, pageData.Meta.HTTPStatus)
 		} else {
-			fmt.Printf("[%s] page=%d offset=%d published=%d http_status=%d\n", entity, page+1, pageData.Offset, totalWritten, pageData.Meta.HTTPStatus)
+			fmt.Printf("[%s] page=%d offset=%d written=%d http_status=%d\n", entity, page+1, pageData.Offset, totalWritten, pageData.Meta.HTTPStatus)
 		}
 
 		if stopByCheckpoint {
@@ -202,17 +208,20 @@ func RunIngest() error {
 	if err != nil {
 		return err
 	}
-	if err := EnsureStatePath(cfg); err != nil {
-		return err
+	if !cfg.UsesClickHouseState() {
+		if err := EnsureStatePath(cfg); err != nil {
+			return err
+		}
 	}
 	ingestor, err := NewIngestor(cfg)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("[CONFIG] ingest_mode=%s kafka_topic=%s entities=%s max_pages=%d max_pages_no_checkpoint=%d ingest_max_objects_per_entity=%d run_soft_deadline_seconds=%.0f use_keyset_pagination=%t batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d kafka_batch_size=%d kafka_write_chunk_size=%d kafka_batch_bytes=%d kafka_max_message_bytes=%d kafka_max_array_items=%d\n",
+	fmt.Printf("[CONFIG] ingest_mode=%s clickhouse_database=%s state_backend=%s entities=%s max_pages=%d max_pages_no_checkpoint=%d ingest_max_objects_per_entity=%d run_soft_deadline_seconds=%.0f use_keyset_pagination=%t batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d\n",
 		cfg.IngestMode,
-		cfg.KafkaTopic,
+		cfg.ClickHouseDatabase,
+		cfg.StateBackend,
 		joinCSV(cfg.Entities),
 		cfg.MaxPages,
 		cfg.MaxPagesNoCheckpoint,
@@ -223,16 +232,17 @@ func RunIngest() error {
 		cfg.InsertBatchSizeForEntity("events"),
 		cfg.InsertBatchSizeForEntity("markets"),
 		cfg.InsertBatchSizeForEntity("series"),
-		cfg.KafkaBatchSize,
-		cfg.KafkaWriteChunkSize,
-		cfg.KafkaBatchBytes,
-		cfg.KafkaMaxMessageBytes,
-		cfg.KafkaMaxArrayItems,
 	)
 
 	ctx := context.Background()
-	if err := ingestor.ValidateKafkaIngest(ctx); err != nil {
-		return err
+	if cfg.UsesClickHouseIngest() {
+		if err := ingestor.ValidateClickHouseIngest(ctx); err != nil {
+			return err
+		}
+	} else {
+		if err := ingestor.ValidateKafkaIngest(ctx); err != nil {
+			return err
+		}
 	}
 	checkpoint, err := ingestor.state.LoadCheckpoint(ctx)
 	if err != nil {
@@ -266,8 +276,10 @@ func RunIngest() error {
 			if err := ingestor.state.SaveCheckpoint(ctx, checkpoint); err != nil {
 				return err
 			}
-			if err := ingestor.PublishCheckpoint(ctx, publicEntityCheckpoint(checkpoint)); err != nil {
-				return err
+			if cfg.UsesKafkaIngest() {
+				if err := ingestor.PublishCheckpoint(ctx, publicEntityCheckpoint(checkpoint)); err != nil {
+					return err
+				}
 			}
 			fmt.Printf("[CHECKPOINT] %s advanced to %s stop_reason=%s\n", entity, res.NewCheckpoint, res.StopReason)
 		} else {
@@ -280,7 +292,7 @@ func RunIngest() error {
 	if err := ingestor.state.SaveCheckpoint(ctx, checkpoint); err != nil {
 		return err
 	}
-	fmt.Printf("\nDONE. published_objects=%d\n", wroteTotal)
+	fmt.Printf("\nDONE. written_objects=%d\n", wroteTotal)
 	return nil
 }
 
