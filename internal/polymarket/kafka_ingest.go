@@ -330,7 +330,7 @@ func (i *Ingestor) writeKafkaMessagesWithRetry(ctx context.Context, messages []k
 		if isKafkaMessageSizeTooLarge(err) || ctx.Err() != nil {
 			return err
 		}
-		failed, retryable := retryableFailedMessages(pending, err)
+		failed, retryable := retryableFailedMessagesForContext(ctx, pending, err)
 		if len(failed) == 0 {
 			return nil
 		}
@@ -383,7 +383,7 @@ func (i *Ingestor) writeMessagesToWritablePartition(ctx context.Context, message
 		}
 
 		lastErr = err
-		failed, retryable := retryableFailedMessages(pending, err)
+		failed, retryable := retryableFailedMessagesForContext(ctx, pending, err)
 		if len(failed) == 0 {
 			return nil
 		}
@@ -458,11 +458,11 @@ func isKafkaMessageSizeTooLarge(err error) bool {
 	return strings.Contains(msg, "message size too large") || strings.Contains(msg, "record too large")
 }
 
-func retryableFailedMessages(messages []kafka.Message, err error) ([]kafka.Message, bool) {
+func retryableFailedMessagesForContext(ctx context.Context, messages []kafka.Message, err error) ([]kafka.Message, bool) {
 	var writeErrs kafka.WriteErrors
 	if errors.As(err, &writeErrs) {
 		if len(writeErrs) != len(messages) {
-			return messages, retryableKafkaWriteError(err)
+			return messages, retryableKafkaWriteErrorForContext(ctx, err)
 		}
 		failed := make([]kafka.Message, 0, writeErrs.Count())
 		retryable := true
@@ -471,21 +471,24 @@ func retryableFailedMessages(messages []kafka.Message, err error) ([]kafka.Messa
 				continue
 			}
 			failed = append(failed, messages[idx])
-			if !retryableKafkaWriteError(writeErr) {
+			if !retryableKafkaWriteErrorForContext(ctx, writeErr) {
 				retryable = false
 			}
 		}
 		return failed, retryable
 	}
-	return messages, retryableKafkaWriteError(err)
+	return messages, retryableKafkaWriteErrorForContext(ctx, err)
 }
 
-func retryableKafkaWriteError(err error) bool {
+func retryableKafkaWriteErrorForContext(ctx context.Context, err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) {
 		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return ctx == nil || ctx.Err() == nil
 	}
 	var writeErrs kafka.WriteErrors
 	if errors.As(err, &writeErrs) {
@@ -493,7 +496,7 @@ func retryableKafkaWriteError(err error) bool {
 			return false
 		}
 		for _, writeErr := range writeErrs {
-			if writeErr != nil && !retryableKafkaWriteError(writeErr) {
+			if writeErr != nil && !retryableKafkaWriteErrorForContext(ctx, writeErr) {
 				return false
 			}
 		}
@@ -537,6 +540,9 @@ func shouldUsePartitionFallback(err error) bool {
 func kafkaRetryReason(err error) string {
 	if err == nil {
 		return ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
 	}
 	msg := strings.ToLower(err.Error())
 	switch {

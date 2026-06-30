@@ -1,6 +1,7 @@
 package polymarket
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -37,5 +38,33 @@ func TestShouldUsePartitionFallbackForLeaderMetadataErrors(t *testing.T) {
 	}
 	if shouldUsePartitionFallback(errors.New("connection reset by peer")) {
 		t.Fatal("network errors should use normal retry path")
+	}
+}
+
+func TestRetryableKafkaWriteErrorTreatsAttemptDeadlineAsRetryable(t *testing.T) {
+	if !retryableKafkaWriteErrorForContext(context.Background(), context.DeadlineExceeded) {
+		t.Fatal("attempt-scoped write deadline should be retryable while parent context is alive")
+	}
+
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	if retryableKafkaWriteErrorForContext(parent, context.DeadlineExceeded) {
+		t.Fatal("deadline should not be retryable after parent context is already stopped")
+	}
+}
+
+func TestRetryableFailedMessagesForContextKeepsDeadlineFailedSubset(t *testing.T) {
+	messages := []kafka.Message{
+		{Key: []byte("ok")},
+		{Key: []byte("retry")},
+	}
+	err := kafka.WriteErrors{nil, context.DeadlineExceeded}
+
+	failed, retryable := retryableFailedMessagesForContext(context.Background(), messages, err)
+	if !retryable {
+		t.Fatal("expected attempt-scoped deadline in write errors to be retryable")
+	}
+	if len(failed) != 1 || string(failed[0].Key) != "retry" {
+		t.Fatalf("failed messages = %#v, want only retry key", failed)
 	}
 }
