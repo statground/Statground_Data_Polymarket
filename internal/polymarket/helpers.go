@@ -431,6 +431,11 @@ func IsRetryableInsertError(err error) bool {
 		return true
 	}
 	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "target table") &&
+		strings.Contains(msg, "of view") &&
+		(strings.Contains(msg, "doesn't exists") || strings.Contains(msg, "does not exist")) {
+		return true
+	}
 	markers := []string{
 		"timed out",
 		"timeout",

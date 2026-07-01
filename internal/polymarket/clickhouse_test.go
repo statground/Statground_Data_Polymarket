@@ -75,6 +75,7 @@ func TestIsRetryableInsertErrorIncludesClickHouseReplicaState(t *testing.T) {
 		"clickhouse status=500 body=Code: 667. DB::Exception: Table is not initialized yet. (NOT_INITIALIZED)",
 		"clickhouse status=500 body=Code: 242. DB::Exception: Table is in readonly mode. (TABLE_IS_READ_ONLY)",
 		"clickhouse status=500 body=Code: 999. Coordination::Exception: Connection loss. (KEEPER_EXCEPTION)",
+		"clickhouse status=404 body=Code: 60. DB::Exception: Target table 'Data_Prediction_Polymarket_Service.polymarket_event_latest_local' of view 'Data_Prediction_Polymarket_Raw.polymarket_event_snapshot_local' doesn't exists. (UNKNOWN_TABLE)",
 	}
 	for _, msg := range cases {
 		if !IsRetryableInsertError(errors.New(msg)) {
