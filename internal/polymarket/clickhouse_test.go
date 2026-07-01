@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClickHouseInsertBodyUsesSnapshotTableAndJSONEachRow(t *testing.T) {
@@ -47,5 +48,16 @@ func TestNewStateStoreUsesClickHouseBackend(t *testing.T) {
 	store := NewStateStore(&Config{StateBackend: "clickhouse"})
 	if _, ok := store.(*ClickHouseStateStore); !ok {
 		t.Fatalf("state store = %T, want *ClickHouseStateStore", store)
+	}
+}
+
+func TestFormatClickHouseDateTime64MillisUsesClickHouseLiteral(t *testing.T) {
+	ts := time.Date(2026, 7, 1, 13, 43, 44, 304787000, time.UTC)
+	got := FormatClickHouseDateTime64Millis(ts, clickHouseAsiaSeoulLocation)
+	if got != "2026-07-01 22:43:44.304" {
+		t.Fatalf("formatted timestamp = %q", got)
+	}
+	if strings.ContainsAny(got, "TZ") {
+		t.Fatalf("ClickHouse DateTime64 literal should not use RFC3339 marker: %q", got)
 	}
 }

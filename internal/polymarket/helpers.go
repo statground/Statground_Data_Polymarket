@@ -71,6 +71,13 @@ func FormatISO8601UTCMicro(t time.Time) string {
 	return t.UTC().Truncate(time.Microsecond).Format("2006-01-02T15:04:05.000000Z")
 }
 
+func FormatClickHouseDateTime64Millis(t time.Time, loc *time.Location) string {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return t.In(loc).Truncate(time.Millisecond).Format("2006-01-02 15:04:05.000")
+}
+
 func FormatDateTimeInput(t *time.Time) any {
 	if t == nil {
 		return nil

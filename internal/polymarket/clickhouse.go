@@ -23,6 +23,8 @@ type ClickHouseStateStore struct {
 	ch  *ClickHouseClient
 }
 
+var clickHouseAsiaSeoulLocation = time.FixedZone("Asia/Seoul", 9*60*60)
+
 func NewClickHouseClient(cfg *Config) *ClickHouseClient {
 	timeout := cfg.ClickHouseTimeout
 	if timeout <= 0 {
@@ -253,7 +255,7 @@ func (s *ClickHouseStateStore) SaveCheckpoint(ctx context.Context, checkpoint ma
 		"service":         "polymarket",
 		"source":          s.cfg.ProducerSource,
 		"checkpoint_json": string(payload),
-		"updated_at":      FormatISO8601UTCMicro(UTCNow()),
+		"updated_at":      FormatClickHouseDateTime64Millis(UTCNow(), clickHouseAsiaSeoulLocation),
 	}
 	line, err := json.Marshal(row)
 	if err != nil {
