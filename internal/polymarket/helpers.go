@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"math"
 	mrand "math/rand"
 	"os"
@@ -395,6 +396,12 @@ func RetryBackoff(base time.Duration, attempt int) time.Duration {
 	return time.Duration(seconds * float64(time.Second))
 }
 
+func H64(value string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(value))
+	return h.Sum64()
+}
+
 func cloneAnyMap(src map[string]any) map[string]any {
 	if len(src) == 0 {
 		return map[string]any{}
@@ -429,6 +436,7 @@ func IsRetryableInsertError(err error) bool {
 		"timeout",
 		"connection aborted",
 		"connection reset",
+		"connection loss",
 		"broken pipe",
 		"remote disconnected",
 		"temporarily unavailable",
@@ -436,6 +444,14 @@ func IsRetryableInsertError(err error) bool {
 		"bad gateway",
 		"service unavailable",
 		"gateway timeout",
+		"keeper_exception",
+		"coordination::exception",
+		"coordination error",
+		"not_initialized",
+		"table is not initialized yet",
+		"table is in readonly mode",
+		"table is read only",
+		"table_is_read_only",
 		"eof",
 	}
 	for _, marker := range markers {
@@ -444,6 +460,12 @@ func IsRetryableInsertError(err error) bool {
 		}
 	}
 	return false
+}
+
+func QuoteSQLString(value string) string {
+	escaped := strings.ReplaceAll(value, "\\", "\\\\")
+	escaped = strings.ReplaceAll(escaped, "'", "\\'")
+	return "'" + escaped + "'"
 }
 
 func EnsureDir(path string) error {

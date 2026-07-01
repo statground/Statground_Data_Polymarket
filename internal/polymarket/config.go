@@ -29,15 +29,19 @@ type Config struct {
 	InsertBatchSizeMarkets int
 	InsertBatchSizeSeries  int
 
-	ClickHouseHTTPURL     string
-	ClickHouseProtocol    string
-	ClickHouseHost        string
-	ClickHousePort        string
-	ClickHouseHTTPURLPath string
-	ClickHouseUser        string
-	ClickHousePassword    string
-	ClickHouseDatabase    string
-	ClickHouseTimeout     time.Duration
+	ClickHouseHTTPURL              string
+	ClickHouseProtocol             string
+	ClickHouseHost                 string
+	ClickHousePort                 string
+	ClickHouseHTTPURLPath          string
+	ClickHouseUser                 string
+	ClickHousePassword             string
+	ClickHouseDatabase             string
+	ClickHouseTimeout              time.Duration
+	ClickHouseDirectOutboxFallback bool
+	ClickHouseOutboxDatabase       string
+	ClickHouseOutboxTable          string
+	ClickHouseOutboxReplayLimit    int
 
 	IngestMode              string
 	KafkaBrokers            []string
@@ -50,8 +54,8 @@ type Config struct {
 	KafkaBatchTimeout       time.Duration
 	KafkaWriteTimeout       time.Duration
 	KafkaWriteChunkSize     int
-	KafkaWriterMaxAttempts int
-	KafkaPartitionFallback bool
+	KafkaWriterMaxAttempts  int
+	KafkaPartitionFallback  bool
 	KafkaFallbackPartitions []int
 	KafkaFallbackTimeout    time.Duration
 	KafkaMaxMessageBytes    int
@@ -100,15 +104,19 @@ func LoadConfig() (*Config, error) {
 		InsertBatchSizeMarkets: maxInt(1, envInt("BATCH_SIZE_MARKETS", envInt("INSERT_BATCH_SIZE_MARKETS", batchSize))),
 		InsertBatchSizeSeries:  maxInt(1, envInt("BATCH_SIZE_SERIES", envInt("INSERT_BATCH_SIZE_SERIES", minInt(batchSize, 50)))),
 
-		ClickHouseHTTPURL:     firstNonEmpty(os.Getenv("CH_HTTP_URL"), os.Getenv("CLICKHOUSE_HTTP_URL")),
-		ClickHouseProtocol:    envString("CH_PROTOCOL", envString("CLICKHOUSE_PROTOCOL", "http")),
-		ClickHouseHost:        firstNonEmpty(os.Getenv("CH_HOST"), os.Getenv("CLICKHOUSE_HOST")),
-		ClickHousePort:        envString("CH_PORT", envString("CLICKHOUSE_PORT", "8123")),
-		ClickHouseHTTPURLPath: firstNonEmpty(os.Getenv("CH_HTTP_URL_PATH"), os.Getenv("CLICKHOUSE_HTTP_URL_PATH")),
-		ClickHouseUser:        firstNonEmpty(os.Getenv("CH_USER"), os.Getenv("CLICKHOUSE_USER")),
-		ClickHousePassword:    firstNonEmpty(os.Getenv("CH_PASSWORD"), os.Getenv("CLICKHOUSE_PASSWORD")),
-		ClickHouseDatabase:    envString("CH_DATABASE", envString("CLICKHOUSE_DATABASE", "Data_Prediction_Polymarket_Raw")),
-		ClickHouseTimeout:     time.Duration(maxInt(1, envInt("CH_REQUEST_TIMEOUT", envInt("CLICKHOUSE_REQUEST_TIMEOUT", 120)))) * time.Second,
+		ClickHouseHTTPURL:              firstNonEmpty(os.Getenv("CH_HTTP_URL"), os.Getenv("CLICKHOUSE_HTTP_URL")),
+		ClickHouseProtocol:             envString("CH_PROTOCOL", envString("CLICKHOUSE_PROTOCOL", "http")),
+		ClickHouseHost:                 firstNonEmpty(os.Getenv("CH_HOST"), os.Getenv("CLICKHOUSE_HOST")),
+		ClickHousePort:                 envString("CH_PORT", envString("CLICKHOUSE_PORT", "8123")),
+		ClickHouseHTTPURLPath:          firstNonEmpty(os.Getenv("CH_HTTP_URL_PATH"), os.Getenv("CLICKHOUSE_HTTP_URL_PATH")),
+		ClickHouseUser:                 firstNonEmpty(os.Getenv("CH_USER"), os.Getenv("CLICKHOUSE_USER")),
+		ClickHousePassword:             firstNonEmpty(os.Getenv("CH_PASSWORD"), os.Getenv("CLICKHOUSE_PASSWORD")),
+		ClickHouseDatabase:             envString("CH_DATABASE", envString("CLICKHOUSE_DATABASE", "Data_Prediction_Polymarket_Raw")),
+		ClickHouseTimeout:              time.Duration(maxInt(1, envInt("CH_REQUEST_TIMEOUT", envInt("CLICKHOUSE_REQUEST_TIMEOUT", 120)))) * time.Second,
+		ClickHouseDirectOutboxFallback: envBool("CH_DIRECT_OUTBOX_FALLBACK", true),
+		ClickHouseOutboxDatabase:       envString("CH_OUTBOX_DATABASE", "Data_Prediction_Polymarket_Log"),
+		ClickHouseOutboxTable:          envString("CH_OUTBOX_TABLE", "polymarket_direct_insert_outbox"),
+		ClickHouseOutboxReplayLimit:    maxInt(0, envInt("CH_OUTBOX_REPLAY_LIMIT", 50)),
 
 		IngestMode:              strings.ToLower(envString("INGEST_MODE", "clickhouse")),
 		KafkaBrokers:            splitCSV(envString("KAFKA_BROKERS", "")),
@@ -121,8 +129,8 @@ func LoadConfig() (*Config, error) {
 		KafkaBatchTimeout:       envFloatDuration("KAFKA_BATCH_TIMEOUT", 0.5),
 		KafkaWriteTimeout:       time.Duration(maxInt(1, envInt("KAFKA_WRITE_TIMEOUT", envInt("KAFKA_WRITE_TIMEOUT_SECONDS", 30)))) * time.Second,
 		KafkaWriteChunkSize:     maxInt(1, envInt("KAFKA_WRITE_CHUNK_SIZE", envInt("KAFKA_BATCH_SIZE", 1))),
-		KafkaWriterMaxAttempts: maxInt(1, envInt("KAFKA_WRITER_MAX_ATTEMPTS", 1)),
-		KafkaPartitionFallback: envBool("KAFKA_PARTITION_FALLBACK_ENABLED", true),
+		KafkaWriterMaxAttempts:  maxInt(1, envInt("KAFKA_WRITER_MAX_ATTEMPTS", 1)),
+		KafkaPartitionFallback:  envBool("KAFKA_PARTITION_FALLBACK_ENABLED", true),
 		KafkaFallbackPartitions: splitIntCSV(envString("KAFKA_FALLBACK_PARTITIONS", "")),
 		KafkaFallbackTimeout:    envFloatDuration("KAFKA_PARTITION_FALLBACK_TIMEOUT_SECONDS", 8.0),
 		KafkaMaxMessageBytes:    maxInt(131072, envInt("KAFKA_MAX_MESSAGE_BYTES", 524288)),

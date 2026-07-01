@@ -2,6 +2,7 @@ package polymarket
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -59,5 +60,49 @@ func TestFormatClickHouseDateTime64MillisUsesClickHouseLiteral(t *testing.T) {
 	}
 	if strings.ContainsAny(got, "TZ") {
 		t.Fatalf("ClickHouse DateTime64 literal should not use RFC3339 marker: %q", got)
+	}
+}
+
+func TestIsRetryableInsertErrorIncludesClickHouseReplicaState(t *testing.T) {
+	cases := []string{
+		"clickhouse status=500 body=Code: 667. DB::Exception: Table is not initialized yet. (NOT_INITIALIZED)",
+		"clickhouse status=500 body=Code: 242. DB::Exception: Table is in readonly mode. (TABLE_IS_READ_ONLY)",
+		"clickhouse status=500 body=Code: 999. Coordination::Exception: Connection loss. (KEEPER_EXCEPTION)",
+	}
+	for _, msg := range cases {
+		if !IsRetryableInsertError(errors.New(msg)) {
+			t.Fatalf("expected retryable ClickHouse insert error: %s", msg)
+		}
+	}
+}
+
+func TestIsRetryableInsertErrorRejectsSchemaErrors(t *testing.T) {
+	msg := "clickhouse status=500 body=Code: 47. DB::Exception: Unknown identifier: raw_json. (UNKNOWN_IDENTIFIER)"
+	if IsRetryableInsertError(errors.New(msg)) {
+		t.Fatalf("schema errors should not be retryable: %s", msg)
+	}
+}
+
+func TestClickHouseDirectOutboxDefaults(t *testing.T) {
+	cfg := &Config{}
+	if got := clickHouseOutboxDatabase(cfg); got != "Data_Prediction_Polymarket_Log" {
+		t.Fatalf("outbox database = %q", got)
+	}
+	if got := clickHouseOutboxTable(cfg); got != "polymarket_direct_insert_outbox" {
+		t.Fatalf("outbox table = %q", got)
+	}
+}
+
+func TestQuoteSQLStringEscapesClickHouseLiteral(t *testing.T) {
+	got := QuoteSQLString(`a\b'c`)
+	if got != `'a\\b\'c'` {
+		t.Fatalf("quoted SQL string = %q", got)
+	}
+}
+
+func TestClickHouseStringSliceDecodesJSONEachRowArray(t *testing.T) {
+	got := clickHouseStringSlice([]any{"event_id", "raw_json", ""})
+	if strings.Join(got, ",") != "event_id,raw_json" {
+		t.Fatalf("decoded string slice = %#v", got)
 	}
 }
