@@ -30,6 +30,16 @@ var polymarketDirectInsertOutboxColumns = []string{
 	"target_columns", "rows_json", "row_count", "payload_hash", "source_error",
 }
 
+var clickHouseUTCDateTime64Columns = map[string]bool{
+	"collected_at_utc":  true,
+	"created_at_utc":    true,
+	"updated_at_utc":    true,
+	"start_date_utc":    true,
+	"end_date_utc":      true,
+	"closed_time_utc":   true,
+	"creation_date_utc": true,
+}
+
 func NewClickHouseClient(cfg *Config) *ClickHouseClient {
 	timeout := cfg.ClickHouseTimeout
 	if timeout <= 0 {
@@ -211,7 +221,7 @@ func clickHouseJSONEachRowPayload(columns []string, rows []map[string]any) ([]by
 	for _, row := range rows {
 		out := make(map[string]any, len(columns))
 		for _, col := range columns {
-			out[col] = row[col]
+			out[col] = clickHouseInsertValue(col, row[col])
 		}
 		line, err := json.Marshal(out)
 		if err != nil {
@@ -221,6 +231,27 @@ func clickHouseJSONEachRowPayload(columns []string, rows []map[string]any) ([]by
 		buf.WriteByte('\n')
 	}
 	return buf.Bytes(), nil
+}
+
+func clickHouseInsertValue(column string, value any) any {
+	if value == nil {
+		return nil
+	}
+	if !clickHouseUTCDateTime64Columns[column] {
+		return value
+	}
+	switch v := value.(type) {
+	case time.Time:
+		return FormatClickHouseDateTime64Millis(v, time.UTC)
+	case string:
+		if t := ParseISOUTC(v); t != nil {
+			return FormatClickHouseDateTime64Millis(*t, time.UTC)
+		}
+	}
+	if t := ParseClickHouseTime(value); t != nil {
+		return FormatClickHouseDateTime64Millis(*t, time.UTC)
+	}
+	return value
 }
 
 func (i *Ingestor) execClickHouseWithRetry(ctx context.Context, label string, query string) error {

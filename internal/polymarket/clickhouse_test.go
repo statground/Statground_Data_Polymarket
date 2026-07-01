@@ -15,6 +15,7 @@ func TestClickHouseInsertBodyUsesSnapshotTableAndJSONEachRow(t *testing.T) {
 		"event_id":         uint64(42),
 		"raw_key":          "019a0000-0000-7000-8000-000000000042",
 		"collected_at_utc": "2026-07-01T00:00:00.000000Z",
+		"created_at_utc":   "2026-06-07T16:46:58.239188Z",
 		"title":            "Test event",
 		"series_ids":       []uint64{1, 2},
 		"market_ids":       []uint64{3},
@@ -39,6 +40,12 @@ func TestClickHouseInsertBodyUsesSnapshotTableAndJSONEachRow(t *testing.T) {
 	}
 	if got := row["title"]; got != "Test event" {
 		t.Fatalf("title = %#v, want Test event", got)
+	}
+	if got := row["collected_at_utc"]; got != "2026-07-01 00:00:00.000" {
+		t.Fatalf("collected_at_utc = %#v, want ClickHouse DateTime64 literal", got)
+	}
+	if got := row["created_at_utc"]; got != "2026-06-07 16:46:58.239" {
+		t.Fatalf("created_at_utc = %#v, want millisecond ClickHouse DateTime64 literal", got)
 	}
 	if _, ok := row["ingested_at"]; ok {
 		t.Fatal("ingested_at should be left to ClickHouse default")
@@ -104,5 +111,12 @@ func TestClickHouseStringSliceDecodesJSONEachRowArray(t *testing.T) {
 	got := clickHouseStringSlice([]any{"event_id", "raw_json", ""})
 	if strings.Join(got, ",") != "event_id,raw_json" {
 		t.Fatalf("decoded string slice = %#v", got)
+	}
+}
+
+func TestClickHouseInsertValueKeepsNonDateColumns(t *testing.T) {
+	got := clickHouseInsertValue("title", "2026-07-01T00:00:00Z")
+	if got != "2026-07-01T00:00:00Z" {
+		t.Fatalf("non-date column changed: %#v", got)
 	}
 }
