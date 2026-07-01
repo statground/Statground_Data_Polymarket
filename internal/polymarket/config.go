@@ -42,6 +42,9 @@ type Config struct {
 	ClickHouseOutboxDatabase       string
 	ClickHouseOutboxTable          string
 	ClickHouseOutboxReplayLimit    int
+	ClickHouseOutboxInsertTimeout  time.Duration
+	ClickHouseOutboxChunkRows      int
+	ClickHouseOutboxChunkBytes     int
 
 	IngestMode              string
 	KafkaBrokers            []string
@@ -117,6 +120,9 @@ func LoadConfig() (*Config, error) {
 		ClickHouseOutboxDatabase:       envString("CH_OUTBOX_DATABASE", "Data_Prediction_Polymarket_Log"),
 		ClickHouseOutboxTable:          envString("CH_OUTBOX_TABLE", "polymarket_direct_insert_outbox"),
 		ClickHouseOutboxReplayLimit:    maxInt(0, envInt("CH_OUTBOX_REPLAY_LIMIT", 50)),
+		ClickHouseOutboxInsertTimeout:  time.Duration(maxInt(1, envInt("CH_OUTBOX_INSERT_TIMEOUT_SECONDS", envInt("CH_OUTBOX_INSERT_TIMEOUT", envInt("CLICKHOUSE_OUTBOX_INSERT_TIMEOUT_SECONDS", 90))))) * time.Second,
+		ClickHouseOutboxChunkRows:      maxInt(1, envInt("CH_OUTBOX_CHUNK_ROWS", envInt("CLICKHOUSE_OUTBOX_CHUNK_ROWS", 100))),
+		ClickHouseOutboxChunkBytes:     maxInt(16*1024, envInt("CH_OUTBOX_CHUNK_BYTES", envInt("CLICKHOUSE_OUTBOX_CHUNK_BYTES", 512*1024))),
 
 		IngestMode:              strings.ToLower(envString("INGEST_MODE", "clickhouse")),
 		KafkaBrokers:            splitCSV(envString("KAFKA_BROKERS", "")),

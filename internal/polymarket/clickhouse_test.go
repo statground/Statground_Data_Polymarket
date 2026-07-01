@@ -99,6 +99,46 @@ func TestClickHouseDirectOutboxDefaults(t *testing.T) {
 	if got := clickHouseOutboxTable(cfg); got != "polymarket_direct_insert_outbox" {
 		t.Fatalf("outbox table = %q", got)
 	}
+	if got := clickHouseOutboxInsertTimeout(cfg); got != 90*time.Second {
+		t.Fatalf("outbox insert timeout = %s", got)
+	}
+	if got := clickHouseOutboxChunkRows(cfg); got != 100 {
+		t.Fatalf("outbox chunk rows = %d", got)
+	}
+	if got := clickHouseOutboxChunkBytes(cfg); got != 512*1024 {
+		t.Fatalf("outbox chunk bytes = %d", got)
+	}
+}
+
+func TestClickHouseDirectOutboxPayloadChunksSplitsByRows(t *testing.T) {
+	payload := []byte("{\"id\":1}\n{\"id\":2}\n{\"id\":3}\n")
+	chunks := clickHouseDirectOutboxPayloadChunks(payload, 3, 2, 1024)
+	if len(chunks) != 2 {
+		t.Fatalf("chunks = %d, want 2", len(chunks))
+	}
+	if got := chunks[0].rowCount; got != 2 {
+		t.Fatalf("first chunk rows = %d", got)
+	}
+	if got := string(chunks[0].payload); got != "{\"id\":1}\n{\"id\":2}\n" {
+		t.Fatalf("first chunk payload = %q", got)
+	}
+	if got := chunks[1].rowCount; got != 1 {
+		t.Fatalf("second chunk rows = %d", got)
+	}
+	if got := string(chunks[1].payload); got != "{\"id\":3}\n" {
+		t.Fatalf("second chunk payload = %q", got)
+	}
+}
+
+func TestClickHouseDirectOutboxPayloadChunksSplitsByBytes(t *testing.T) {
+	payload := []byte("{\"id\":1,\"name\":\"alpha\"}\n{\"id\":2,\"name\":\"beta\"}\n")
+	chunks := clickHouseDirectOutboxPayloadChunks(payload, 2, 100, 30)
+	if len(chunks) != 2 {
+		t.Fatalf("chunks = %d, want 2", len(chunks))
+	}
+	if chunks[0].rowCount != 1 || chunks[1].rowCount != 1 {
+		t.Fatalf("chunk row counts = %d/%d, want 1/1", chunks[0].rowCount, chunks[1].rowCount)
+	}
 }
 
 func TestQuoteSQLStringEscapesClickHouseLiteral(t *testing.T) {

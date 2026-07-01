@@ -374,39 +374,132 @@ func (s *ClickHouseStateStore) SaveCheckpoint(ctx context.Context, checkpoint ma
 func enqueueClickHouseDirectOutbox(ctx context.Context, cfg *Config, ch *ClickHouseClient, database, table string, columns []string, payload []byte, rowCount int, sourceErr error) error {
 	outboxDB := clickHouseOutboxDatabase(cfg)
 	outboxTable := clickHouseOutboxTable(cfg)
-	payloadHash := H64(database + "\x1f" + table + "\x1f" + strings.Join(columns, "\x1f") + "\x1f" + string(payload))
-	if exists, err := pendingClickHouseDirectOutboxExists(ctx, ch, outboxDB, outboxTable, database, table, payloadHash); err == nil && exists {
-		fmt.Printf("[clickhouse] direct outbox already has pending chunk target=%s.%s rows=%d hash=%d\n", database, table, rowCount, payloadHash)
+	chunks := clickHouseDirectOutboxPayloadChunks(payload, rowCount, clickHouseOutboxChunkRows(cfg), clickHouseOutboxChunkBytes(cfg))
+	for idx, chunk := range chunks {
+		payloadHash := H64(database + "\x1f" + table + "\x1f" + strings.Join(columns, "\x1f") + "\x1f" + string(chunk.payload))
+		if exists, err := pendingClickHouseDirectOutboxExistsWithTimeout(ctx, cfg, ch, outboxDB, outboxTable, database, table, payloadHash); err == nil && exists {
+			fmt.Printf("[clickhouse] direct outbox already has pending chunk target=%s.%s rows=%d chunk=%d/%d hash=%d\n",
+				database, table, chunk.rowCount, idx+1, len(chunks), payloadHash)
+			continue
+		}
+		outboxUUID, err := UUIDv7()
+		if err != nil {
+			return err
+		}
+		row := map[string]any{
+			"outbox_uuid":     outboxUUID,
+			"created_at":      FormatClickHouseDateTime64Millis(UTCNow(), clickHouseAsiaSeoulLocation),
+			"target_database": database,
+			"target_table":    table,
+			"target_columns":  columns,
+			"rows_json":       string(chunk.payload),
+			"row_count":       chunk.rowCount,
+			"payload_hash":    payloadHash,
+			"source_error":    sanitizeClickHouseError(cfg, sourceErr),
+		}
+		body, err := clickHouseJSONEachRowPayload(polymarketDirectInsertOutboxColumns, []map[string]any{row})
+		if err != nil {
+			return err
+		}
+		query := clickHouseInsertQuery(clickHouseTableName(outboxDB, outboxTable), polymarketDirectInsertOutboxColumns, body)
+		if err := execClickHouseOutboxInsertWithRetry(ctx, cfg, ch, query, outboxDB, outboxTable, database, table, payloadHash); err != nil {
+			return err
+		}
+		fmt.Printf("[clickhouse] queued direct outbox target=%s.%s rows=%d chunk=%d/%d hash=%d reason=%s\n",
+			database, table, chunk.rowCount, idx+1, len(chunks), payloadHash, sanitizeClickHouseError(cfg, sourceErr))
+	}
+	return nil
+}
+
+type clickHouseDirectOutboxPayloadChunk struct {
+	payload  []byte
+	rowCount int
+}
+
+func clickHouseDirectOutboxPayloadChunks(payload []byte, rowCount, maxRows, maxBytes int) []clickHouseDirectOutboxPayloadChunk {
+	if len(payload) == 0 {
 		return nil
 	}
-	outboxUUID, err := UUIDv7()
-	if err != nil {
-		return err
+	if maxRows <= 0 {
+		maxRows = rowCount
 	}
-	row := map[string]any{
-		"outbox_uuid":     outboxUUID,
-		"created_at":      FormatClickHouseDateTime64Millis(UTCNow(), clickHouseAsiaSeoulLocation),
-		"target_database": database,
-		"target_table":    table,
-		"target_columns":  columns,
-		"rows_json":       string(payload),
-		"row_count":       rowCount,
-		"payload_hash":    payloadHash,
-		"source_error":    sanitizeClickHouseError(cfg, sourceErr),
+	if maxRows <= 0 {
+		maxRows = 1
 	}
-	body, err := clickHouseJSONEachRowPayload(polymarketDirectInsertOutboxColumns, []map[string]any{row})
-	if err != nil {
-		return err
+	if maxBytes <= 0 {
+		maxBytes = len(payload) + 1
 	}
-	insertCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	trimmed := bytes.TrimRight(payload, "\n")
+	if len(trimmed) == 0 {
+		return []clickHouseDirectOutboxPayloadChunk{{payload: payload, rowCount: rowCount}}
+	}
+	lines := bytes.Split(trimmed, []byte{'\n'})
+	if len(lines) <= maxRows && len(payload) <= maxBytes {
+		return []clickHouseDirectOutboxPayloadChunk{{payload: payload, rowCount: len(lines)}}
+	}
+	chunks := make([]clickHouseDirectOutboxPayloadChunk, 0, (len(lines)+maxRows-1)/maxRows)
+	current := bytes.Buffer{}
+	currentRows := 0
+	for _, line := range lines {
+		lineLen := len(line) + 1
+		if currentRows > 0 && (currentRows >= maxRows || current.Len()+lineLen > maxBytes) {
+			chunks = append(chunks, clickHouseDirectOutboxPayloadChunk{payload: append([]byte(nil), current.Bytes()...), rowCount: currentRows})
+			current.Reset()
+			currentRows = 0
+		}
+		current.Write(line)
+		current.WriteByte('\n')
+		currentRows++
+	}
+	if currentRows > 0 {
+		chunks = append(chunks, clickHouseDirectOutboxPayloadChunk{payload: append([]byte(nil), current.Bytes()...), rowCount: currentRows})
+	}
+	return chunks
+}
+
+func execClickHouseOutboxInsertWithRetry(ctx context.Context, cfg *Config, ch *ClickHouseClient, query, outboxDB, outboxTable, database, table string, payloadHash uint64) error {
+	maxRetries := 1
+	if cfg != nil {
+		maxRetries = maxInt(1, cfg.MaxRetries)
+	}
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		insertCtx, cancel := context.WithTimeout(ctx, clickHouseOutboxInsertTimeout(cfg))
+		_, err := ch.Exec(insertCtx, query)
+		cancel()
+		if err == nil {
+			if attempt > 1 {
+				fmt.Printf("[clickhouse outbox retry] succeeded target=%s.%s hash=%d attempt=%d\n", database, table, payloadHash, attempt)
+			}
+			return nil
+		}
+		lastErr = err
+		if exists, existsErr := pendingClickHouseDirectOutboxExistsWithTimeout(ctx, cfg, ch, outboxDB, outboxTable, database, table, payloadHash); existsErr == nil && exists {
+			fmt.Printf("[clickhouse] direct outbox enqueue confirmed after retryable response target=%s.%s hash=%d\n", database, table, payloadHash)
+			return nil
+		}
+		if ctx.Err() != nil || !IsRetryableInsertError(err) || attempt >= maxRetries {
+			return err
+		}
+		baseSleep := 200 * time.Millisecond
+		if cfg != nil && cfg.BaseSleep > 0 {
+			baseSleep = cfg.BaseSleep
+		}
+		sleepFor := RetryBackoff(baseSleep, attempt)
+		fmt.Printf("[clickhouse outbox retry] target=%s.%s hash=%d attempt=%d/%d sleep=%s err=%s\n",
+			database, table, payloadHash, attempt, maxRetries, sleepFor, shortClickHouseError(err))
+		if err := SleepContext(ctx, sleepFor); err != nil {
+			return fmt.Errorf("clickhouse outbox retry wait stopped: %w; last_error=%s", err, shortClickHouseError(lastErr))
+		}
+	}
+	return lastErr
+}
+
+func pendingClickHouseDirectOutboxExistsWithTimeout(ctx context.Context, cfg *Config, ch *ClickHouseClient, outboxDB, outboxTable, database, table string, payloadHash uint64) (bool, error) {
+	probeTimeout := minDuration(15*time.Second, clickHouseOutboxInsertTimeout(cfg))
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	query := clickHouseInsertQuery(clickHouseTableName(outboxDB, outboxTable), polymarketDirectInsertOutboxColumns, body)
-	if _, err := ch.Exec(insertCtx, query); err != nil {
-		return err
-	}
-	fmt.Printf("[clickhouse] queued direct outbox target=%s.%s rows=%d hash=%d reason=%s\n",
-		database, table, rowCount, payloadHash, sanitizeClickHouseError(cfg, sourceErr))
-	return nil
+	return pendingClickHouseDirectOutboxExists(probeCtx, ch, outboxDB, outboxTable, database, table, payloadHash)
 }
 
 func pendingClickHouseDirectOutboxExists(ctx context.Context, ch *ClickHouseClient, outboxDB, outboxTable, database, table string, payloadHash uint64) (bool, error) {
@@ -627,6 +720,34 @@ func clickHouseOutboxTable(cfg *Config) string {
 		return strings.TrimSpace(cfg.ClickHouseOutboxTable)
 	}
 	return "polymarket_direct_insert_outbox"
+}
+
+func clickHouseOutboxInsertTimeout(cfg *Config) time.Duration {
+	if cfg != nil && cfg.ClickHouseOutboxInsertTimeout > 0 {
+		return cfg.ClickHouseOutboxInsertTimeout
+	}
+	return 90 * time.Second
+}
+
+func clickHouseOutboxChunkRows(cfg *Config) int {
+	if cfg != nil && cfg.ClickHouseOutboxChunkRows > 0 {
+		return cfg.ClickHouseOutboxChunkRows
+	}
+	return 100
+}
+
+func clickHouseOutboxChunkBytes(cfg *Config) int {
+	if cfg != nil && cfg.ClickHouseOutboxChunkBytes > 0 {
+		return cfg.ClickHouseOutboxChunkBytes
+	}
+	return 512 * 1024
+}
+
+func minDuration(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func shortClickHouseError(err error) string {

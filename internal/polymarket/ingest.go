@@ -218,11 +218,14 @@ func RunIngest() error {
 		return err
 	}
 
-	fmt.Printf("[CONFIG] ingest_mode=%s clickhouse_database=%s state_backend=%s clickhouse_direct_outbox=%t entities=%s max_pages=%d max_pages_no_checkpoint=%d ingest_max_objects_per_entity=%d run_soft_deadline_seconds=%.0f use_keyset_pagination=%t batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d\n",
+	fmt.Printf("[CONFIG] ingest_mode=%s clickhouse_database=%s state_backend=%s clickhouse_direct_outbox=%t clickhouse_outbox_chunk_rows=%d clickhouse_outbox_chunk_bytes=%d clickhouse_outbox_insert_timeout_seconds=%.0f entities=%s max_pages=%d max_pages_no_checkpoint=%d ingest_max_objects_per_entity=%d run_soft_deadline_seconds=%.0f use_keyset_pagination=%t batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d\n",
 		cfg.IngestMode,
 		cfg.ClickHouseDatabase,
 		cfg.StateBackend,
 		cfg.ClickHouseDirectOutboxFallback,
+		clickHouseOutboxChunkRows(cfg),
+		clickHouseOutboxChunkBytes(cfg),
+		clickHouseOutboxInsertTimeout(cfg).Seconds(),
 		joinCSV(cfg.Entities),
 		cfg.MaxPages,
 		cfg.MaxPagesNoCheckpoint,

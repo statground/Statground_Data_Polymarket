@@ -7,30 +7,30 @@ import (
 )
 
 type RefreshEntityReport struct {
-	Mode             string `json:"mode"`
-	WrittenObjects   int    `json:"written_objects"`
-	RefreshUntilUTC  string `json:"refresh_until_utc,omitempty"`
-	OrderUsed        string `json:"order_used,omitempty"`
-	PagesRead        int    `json:"pages_read,omitempty"`
-	StopReason       string `json:"stop_reason,omitempty"`
-	NewestSeenUTC    string `json:"newest_seen_utc,omitempty"`
-	OldestSeenUTC    string `json:"oldest_seen_utc,omitempty"`
+	Mode            string `json:"mode"`
+	WrittenObjects  int    `json:"written_objects"`
+	RefreshUntilUTC string `json:"refresh_until_utc,omitempty"`
+	OrderUsed       string `json:"order_used,omitempty"`
+	PagesRead       int    `json:"pages_read,omitempty"`
+	StopReason      string `json:"stop_reason,omitempty"`
+	NewestSeenUTC   string `json:"newest_seen_utc,omitempty"`
+	OldestSeenUTC   string `json:"oldest_seen_utc,omitempty"`
 }
 
 type RefreshReport struct {
-	RunAtUTC              string                         `json:"run_at_utc"`
-	LookbackHours         int                            `json:"lookback_hours"`
-	Entities              map[string]RefreshEntityReport `json:"entities"`
-	WrittenObjectsTotal   int                            `json:"written_objects_total"`
+	RunAtUTC            string                         `json:"run_at_utc"`
+	LookbackHours       int                            `json:"lookback_hours"`
+	Entities            map[string]RefreshEntityReport `json:"entities"`
+	WrittenObjectsTotal int                            `json:"written_objects_total"`
 }
 
 type refreshWindowResult struct {
-	WrittenObjects   int
-	OrderUsed        string
-	PagesRead        int
-	StopReason       string
-	NewestSeenUTC    string
-	OldestSeenUTC    string
+	WrittenObjects int
+	OrderUsed      string
+	PagesRead      int
+	StopReason     string
+	NewestSeenUTC  string
+	OldestSeenUTC  string
 }
 
 func fetchRefreshWindow(ctx context.Context, ingestor *Ingestor, entity string, refreshUntilISO string, stopAt *time.Time) (refreshWindowResult, error) {
@@ -167,10 +167,14 @@ func RunRefresh() error {
 		return err
 	}
 
-	fmt.Printf("[CONFIG] ingest_mode=%s clickhouse_database=%s state_backend=%s entities=%s max_pages=%d lookback_hours=%d refresh_max_objects_per_entity=%d run_soft_deadline_seconds=%.0f use_keyset_pagination=%t batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d\n",
+	fmt.Printf("[CONFIG] ingest_mode=%s clickhouse_database=%s state_backend=%s clickhouse_direct_outbox=%t clickhouse_outbox_chunk_rows=%d clickhouse_outbox_chunk_bytes=%d clickhouse_outbox_insert_timeout_seconds=%.0f entities=%s max_pages=%d lookback_hours=%d refresh_max_objects_per_entity=%d run_soft_deadline_seconds=%.0f use_keyset_pagination=%t batch_size_default=%d batch_size_events=%d batch_size_markets=%d batch_size_series=%d\n",
 		cfg.IngestMode,
 		cfg.ClickHouseDatabase,
 		cfg.StateBackend,
+		cfg.ClickHouseDirectOutboxFallback,
+		clickHouseOutboxChunkRows(cfg),
+		clickHouseOutboxChunkBytes(cfg),
+		clickHouseOutboxInsertTimeout(cfg).Seconds(),
 		joinCSV(cfg.Entities),
 		cfg.MaxPages,
 		cfg.LookbackHours,
@@ -227,14 +231,14 @@ func RunRefresh() error {
 		}
 		wroteTotal += res.WrittenObjects
 		report.Entities[entity] = RefreshEntityReport{
-			Mode:             "lookback_refresh_clickhouse_direct",
-			WrittenObjects:   res.WrittenObjects,
-			RefreshUntilUTC:  refreshUntilISO,
-			OrderUsed:        res.OrderUsed,
-			PagesRead:        res.PagesRead,
-			StopReason:       res.StopReason,
-			NewestSeenUTC:    res.NewestSeenUTC,
-			OldestSeenUTC:    res.OldestSeenUTC,
+			Mode:            "lookback_refresh_clickhouse_direct",
+			WrittenObjects:  res.WrittenObjects,
+			RefreshUntilUTC: refreshUntilISO,
+			OrderUsed:       res.OrderUsed,
+			PagesRead:       res.PagesRead,
+			StopReason:      res.StopReason,
+			NewestSeenUTC:   res.NewestSeenUTC,
+			OldestSeenUTC:   res.OldestSeenUTC,
 		}
 		fmt.Printf("[REFRESH-DONE] %s written=%d pages=%d stop_reason=%s newest_seen=%s oldest_seen=%s\n",
 			entity, res.WrittenObjects, res.PagesRead, res.StopReason, defaultDisplay(res.NewestSeenUTC, "(unknown)"), defaultDisplay(res.OldestSeenUTC, "(unknown)"))
